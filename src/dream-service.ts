@@ -4,6 +4,7 @@ import type {
   OpenClawPluginServiceContext,
 } from "openclaw/plugin-sdk/plugin-entry";
 import { runDream } from "./dream-engine.js";
+import type { SubagentRuntime } from "./analysis/llm-helper.js";
 import { formatReportMarkdown, type DreamReport } from "./report/reporter.js";
 import fs from "node:fs";
 import path from "node:path";
@@ -45,7 +46,6 @@ export function createDreamService(api: OpenClawPluginApi): OpenClawPluginServic
 
   let timerId: ReturnType<typeof setTimeout> | null = null;
   let sessionCount = 0;
-  let lastRunTime: number | null = null;
 
   // Count agent_end events for the minimum-sessions gate
   api.on("agent_end", async () => {
@@ -89,7 +89,13 @@ export function createDreamService(api: OpenClawPluginApi): OpenClawPluginServic
     logger.debug?.(`[autodream] Next run scheduled at ${target.toISOString()}`);
 
     timerId = setTimeout(async () => {
-      await executeDream();
+      try {
+        await executeDream();
+      } catch (err) {
+        logger.error?.(
+          `[autodream] Dream run failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
       scheduleNextRun();
     }, delayMs);
   }
@@ -105,12 +111,21 @@ export function createDreamService(api: OpenClawPluginApi): OpenClawPluginServic
 
     logger.info?.("[autodream] Starting scheduled dream run...");
 
-    const subagentRuntime = (api as any).runtime?.subagent ?? null;
+    // runtime.subagent is not in the public SDK types but provided at runtime
+    const subagentRuntime =
+      ((api as unknown as { runtime?: { subagent?: SubagentRuntime } }).runtime?.subagent) ?? null;
     const pluginConfig = api.pluginConfig ?? {};
-    
+
     // Parse allowedScopes from config (may be array or undefined)
     const allowedScopes = (pluginConfig["allowedScopes"] as string[] | undefined) ?? config.allowedScopes;
-    
+
+    // Parse LLM config
+    const llmEnabled = pluginConfig["llmEnabled"] !== false;
+    const llmModel = typeof pluginConfig["llmModel"] === "string"
+      ? pluginConfig["llmModel"] : undefined;
+    const llmMaxCalls = typeof pluginConfig["llmMaxCalls"] === "number"
+      ? pluginConfig["llmMaxCalls"] : undefined;
+
     const result = await runDream({
       scopes: allowedScopes,
       dryRun:
@@ -123,6 +138,9 @@ export function createDreamService(api: OpenClawPluginApi): OpenClawPluginServic
       dedupThreshold: config.dedupThreshold,
       maxChangesPerRun: config.maxChangesPerRun,
       scanLimit: config.scanLimit,
+      llmEnabled,
+      llmModel,
+      llmMaxCalls,
       llmProvider: pluginConfig["llmProvider"] as "openai" | "anthropic" | undefined,
       llmBaseUrl: pluginConfig["llmBaseUrl"] as string | undefined,
       llmApiKey: pluginConfig["llmApiKey"] as string | undefined,
@@ -132,7 +150,6 @@ export function createDreamService(api: OpenClawPluginApi): OpenClawPluginServic
     await writeReport(result.report);
 
     sessionCount = 0;
-    lastRunTime = Date.now();
 
     logger.info?.(
       `[autodream] Dream complete: ${result.report.scanned} scanned, ` +

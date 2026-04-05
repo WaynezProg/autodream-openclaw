@@ -165,7 +165,10 @@ export async function runDream(
 
       // Dedup: merge duplicates via LLM when autoMerge is on
       if (config.autoMergeDuplicates) {
-        merges = await mergeWithLlm(dedupPairs, llm);
+        merges = await mergeWithLlm(
+          dedupPairs.slice(0, config.maxChangesPerRun),
+          llm,
+        );
       }
     }
 

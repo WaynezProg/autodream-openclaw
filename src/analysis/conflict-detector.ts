@@ -37,7 +37,7 @@ const AFFIRM_NEGATE_RULES: Array<{
   },
   {
     name: "true-false",
-    affirm: /是|正確|true/i,
+    affirm: /(?<![不])是|正確|true/i,
     negate: /不是|錯誤|false/i,
   },
 ];

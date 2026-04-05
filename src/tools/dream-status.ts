@@ -75,9 +75,9 @@ export function createDreamStatusTool(): (
         lines.push(``);
         lines.push(`## Modules`);
         lines.push(`- [x] dedup-detector`);
-        lines.push(`- [ ] time-normalizer`);
-        lines.push(`- [ ] conflict-detector`);
-        lines.push(`- [ ] staleness-scorer`);
+        lines.push(`- [x] time-normalizer`);
+        lines.push(`- [x] conflict-detector`);
+        lines.push(`- [x] staleness-scorer`);
 
         const text = lines.join("\n");
         return {

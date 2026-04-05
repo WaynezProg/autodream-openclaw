@@ -14,7 +14,9 @@ export default definePluginEntry({
     const pluginConfig = api.pluginConfig ?? {};
 
     // 註冊 dream_now tool (pass subagent runtime for LLM calls)
-    const subagentRuntime = (api as any).runtime?.subagent ?? null;
+    // runtime.subagent is not in the public SDK types but provided at runtime
+    const subagentRuntime =
+      (api as unknown as { runtime?: { subagent?: unknown } }).runtime?.subagent ?? null;
     api.registerTool(createDreamNowTool(pluginConfig, subagentRuntime), {
       names: ["dream_now"],
     });

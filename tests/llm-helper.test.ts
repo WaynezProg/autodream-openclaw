@@ -55,7 +55,7 @@ describe("LlmHelper", () => {
   });
 
   it("should return null when no runtime and no provider", async () => {
-    const llm = new LlmHelper(null);
+    const llm = new LlmHelper(null, { llmProvider: undefined });
     const result = await llm.ask("test");
     expect(result).toBeNull();
     expect(llm.logs[0].error).toBe("no runtime");
@@ -150,7 +150,7 @@ describe("LlmHelper", () => {
     expect(new LlmHelper(runtime).backend).toBe("subagent");
     expect(new LlmHelper(null, { llmProvider: "openai" }).backend).toBe("openai");
     expect(new LlmHelper(null, { llmProvider: "anthropic" }).backend).toBe("anthropic");
-    expect(new LlmHelper(null).backend).toBe("none");
+    expect(new LlmHelper(null, { llmProvider: undefined }).backend).toBe("none");
   });
 
   it("should prefer subagent over HTTP when both available", async () => {
@@ -301,8 +301,8 @@ describe("LlmHelper HTTP — OpenAI", () => {
     });
     globalThis.fetch = mockFetch;
 
-    // model is "anthropic:claude-3-5-haiku" (the DEFAULT), but provider is "openai"
-    // → should resolve to "gpt-4o-mini"
+    // model is "gpt-4o" (the DEFAULT), but provider is "openai"
+    // → should resolve to provider-specific default "gpt-4o-mini"
     const llm = new LlmHelper(null, {
       llmProvider: "openai",
       maxCalls: 5,

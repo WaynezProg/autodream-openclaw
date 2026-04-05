@@ -15,14 +15,12 @@ export interface StaleEntry {
 export interface StalenessOptions {
   staleAgeDays?: number;
   minAccessCount?: number;
-  maxImportance?: number;
   scoreThreshold?: number;
 }
 
 const DEFAULTS: Required<StalenessOptions> = {
   staleAgeDays: 60,
   minAccessCount: 3,
-  maxImportance: 0.3,
   scoreThreshold: 0.7,
 };
 
@@ -43,7 +41,7 @@ export function scoreAndFilterStale(
     const ageDays = (now - m.timestamp) / 86_400_000;
     const accessCount = meta.access_count ?? 0;
 
-    const ageFactor = Math.min(ageDays / cfg.staleAgeDays, 1.0);
+    const ageFactor = Math.max(0, Math.min(ageDays / cfg.staleAgeDays, 1.0));
     const accessFactor = Math.max(1 - accessCount / cfg.minAccessCount, 0);
     const importanceFactor = Math.max(1 - m.importance, 0);
 

@@ -135,7 +135,8 @@ export class LanceDbAdapter {
     // 查詢所有記憶（LanceDB 預設 limit=10，必須明確設定）
     let query = table.query().limit(this.scanLimit);
     if (scope) {
-      query = query.where(`scope = '${scope}'`);
+      const escaped = scope.replace(/'/g, "''");
+      query = query.where(`scope = '${escaped}'`);
     }
 
     const rows = (await query.toArray()) as Record<string, unknown>[];
@@ -156,7 +157,7 @@ export class LanceDbAdapter {
     const db = this.ensureConnected();
     try {
       const table = await db.openTable(this.tableName);
-      const filter = scope ? `scope = '${scope}'` : undefined;
+      const filter = scope ? `scope = '${scope.replace(/'/g, "''")}'` : undefined;
       return await table.countRows(filter);
     } catch {
       return 0;

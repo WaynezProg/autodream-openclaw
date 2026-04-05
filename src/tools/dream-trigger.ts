@@ -35,19 +35,18 @@ export function createDreamNowTool(
         _toolCallId: string,
         params: { scope?: string; dryRun?: boolean },
       ) => {
-        const dedupThreshold = Number(pluginConfig["dedupThreshold"] ?? 0.90);
-        const maxChangesPerRun = Number(
-          pluginConfig["maxChangesPerRun"] ?? 20,
-        );
-        const autoMergeDuplicates = Boolean(
-          pluginConfig["autoMergeDuplicates"] ?? false,
-        );
+        const rawDedupThreshold = Number(pluginConfig["dedupThreshold"] ?? 0.90);
+        const dedupThreshold = Number.isFinite(rawDedupThreshold) ? rawDedupThreshold : 0.90;
+        const rawMaxChanges = Number(pluginConfig["maxChangesPerRun"] ?? 20);
+        const maxChangesPerRun = Number.isFinite(rawMaxChanges) ? rawMaxChanges : 20;
+        const autoMergeDuplicates = pluginConfig["autoMergeDuplicates"] === true;
         const llmEnabled = pluginConfig["llmEnabled"] !== false;
-        const llmModel = String(
-          pluginConfig["llmModel"] ?? "anthropic:claude-3-5-haiku",
-        );
-        const llmMaxCalls = Number(pluginConfig["llmMaxCalls"] ?? 10);
-        const scanLimit = Number(pluginConfig["scanLimit"] ?? 5000);
+        const llmModel = typeof pluginConfig["llmModel"] === "string"
+          ? pluginConfig["llmModel"] : "gpt-4o";
+        const rawLlmMaxCalls = Number(pluginConfig["llmMaxCalls"] ?? 10);
+        const llmMaxCalls = Number.isFinite(rawLlmMaxCalls) ? rawLlmMaxCalls : 10;
+        const rawScanLimit = Number(pluginConfig["scanLimit"] ?? 5000);
+        const scanLimit = Number.isFinite(rawScanLimit) ? rawScanLimit : 5000;
         const llmProvider = pluginConfig["llmProvider"] as
           | "openai"
           | "anthropic"

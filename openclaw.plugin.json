@@ -1,0 +1,23 @@
+{
+  "id": "autodream",
+  "name": "autoDream — Memory Consolidation",
+  "description": "自動整理記憶：偵測重複、矛盾、過時條目，轉換相對時間",
+  "version": "0.1.0",
+  "main": "dist/index.js",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "intervalHours": { "type": "number", "default": 24 },
+      "scheduleHour": { "type": "number", "default": 3 },
+      "maxChangesPerRun": { "type": "number", "default": 20 },
+      "dedupThreshold": { "type": "number", "default": 0.90 },
+      "staleAgeDays": { "type": "number", "default": 60 },
+      "autoMergeDuplicates": { "type": "boolean", "default": false },
+      "autoFixTime": { "type": "boolean", "default": false },
+      "autoDeleteStale": { "type": "boolean", "default": false },
+      "minSessionsSinceLastRun": { "type": "number", "default": 3 },
+      "notifyTarget": { "type": "string" }
+    }
+  }
+}

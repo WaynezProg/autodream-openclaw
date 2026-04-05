@@ -20,6 +20,9 @@ export interface DreamServiceConfig {
   staleAgeDays: number;
   dedupThreshold: number;
   maxChangesPerRun: number;
+  scanLimit: number;
+  /** Scopes allowed for background runs */
+  allowedScopes: string[];
 }
 
 const DEFAULT_CONFIG: DreamServiceConfig = {
@@ -32,6 +35,8 @@ const DEFAULT_CONFIG: DreamServiceConfig = {
   staleAgeDays: 60,
   dedupThreshold: 0.9,
   maxChangesPerRun: 20,
+  scanLimit: 5000,
+  allowedScopes: ["global"],
 };
 
 export function createDreamService(api: OpenClawPluginApi): OpenClawPluginService {
@@ -102,7 +107,12 @@ export function createDreamService(api: OpenClawPluginApi): OpenClawPluginServic
 
     const subagentRuntime = (api as any).runtime?.subagent ?? null;
     const pluginConfig = api.pluginConfig ?? {};
+    
+    // Parse allowedScopes from config (may be array or undefined)
+    const allowedScopes = (pluginConfig["allowedScopes"] as string[] | undefined) ?? config.allowedScopes;
+    
     const result = await runDream({
+      scopes: allowedScopes,
       dryRun:
         !config.autoMergeDuplicates &&
         !config.autoFixTime &&
@@ -112,6 +122,7 @@ export function createDreamService(api: OpenClawPluginApi): OpenClawPluginServic
       staleAgeDays: config.staleAgeDays,
       dedupThreshold: config.dedupThreshold,
       maxChangesPerRun: config.maxChangesPerRun,
+      scanLimit: config.scanLimit,
       llmProvider: pluginConfig["llmProvider"] as "openai" | "anthropic" | undefined,
       llmBaseUrl: pluginConfig["llmBaseUrl"] as string | undefined,
       llmApiKey: pluginConfig["llmApiKey"] as string | undefined,

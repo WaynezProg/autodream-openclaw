@@ -13,11 +13,19 @@
       "maxChangesPerRun": { "type": "number", "default": 20 },
       "dedupThreshold": { "type": "number", "default": 0.90 },
       "staleAgeDays": { "type": "number", "default": 60 },
+      "scanLimit": { "type": "number", "default": 5000, "description": "Max memories to scan per run" },
+      "allowedScopes": { "type": "array", "items": { "type": "string" }, "default": ["global"], "description": "Scopes allowed for background runs (default: global only)" },
       "autoMergeDuplicates": { "type": "boolean", "default": false },
       "autoFixTime": { "type": "boolean", "default": false },
       "autoDeleteStale": { "type": "boolean", "default": false },
       "minSessionsSinceLastRun": { "type": "number", "default": 3 },
-      "notifyTarget": { "type": "string" }
+      "notifyTarget": { "type": "string" },
+      "llmEnabled": { "type": "boolean", "default": true, "description": "啟用 LLM 輔助分析" },
+      "llmProvider": { "type": "string", "enum": ["openai", "anthropic"], "default": "openai", "description": "LLM provider" },
+      "llmModel": { "type": "string", "default": "gpt-4o", "description": "LLM model identifier" },
+      "llmBaseUrl": { "type": "string", "description": "Custom API base URL (e.g. Ollama)" },
+      "llmApiKey": { "type": "string", "description": "API key (falls back to OPENAI_API_KEY / ANTHROPIC_API_KEY env var)" },
+      "llmMaxCalls": { "type": "number", "default": 10, "description": "Max LLM calls per dream run" }
     }
   }
 }

@@ -1,4 +1,4 @@
-import { LanceDbAdapter } from "./lancedb-adapter.js";
+import { LanceDbAdapter, type MemoryRecord } from "./lancedb-adapter.js";
 import { detectDuplicates } from "./analysis/dedup-detector.js";
 import { detectRelativeTime, resolveTimeWithLlm } from "./analysis/time-normalizer.js";
 import {
@@ -21,9 +21,11 @@ export interface DreamEngineConfig {
   autoMergeDuplicates: boolean;
   autoFixTime: boolean;
   staleAgeDays: number;
+  /** Max memories to scan (default: 5000) */
+  scanLimit: number;
   /** Enable LLM-assisted analysis (default: true) */
   llmEnabled: boolean;
-  /** LLM model in "provider:model" format (default: "anthropic:claude-3-5-haiku") */
+  /** LLM model identifier (default: "gpt-4o") */
   llmModel: string;
   /** Max LLM calls per dream run (default: 10) */
   llmMaxCalls: number;
@@ -41,6 +43,7 @@ const DEFAULT_CONFIG: DreamEngineConfig = {
   autoMergeDuplicates: false,
   autoFixTime: false,
   staleAgeDays: 60,
+  scanLimit: 5000,
   llmEnabled: true,
   llmModel: DEFAULT_LLM_CONFIG.model,
   llmMaxCalls: DEFAULT_LLM_CONFIG.maxCalls,
@@ -61,7 +64,10 @@ export function getLastRunResult(): DreamRunResult | null {
 
 export async function runDream(
   opts?: Partial<DreamEngineConfig> & {
+    /** Single scope to scan */
     scope?: string;
+    /** Multiple scopes to scan (takes precedence over scope) */
+    scopes?: string[];
     dryRun?: boolean;
     /** Pass the subagent runtime from plugin API for LLM calls */
     subagentRuntime?: SubagentRuntime | null;
@@ -69,6 +75,14 @@ export async function runDream(
 ): Promise<DreamRunResult> {
   const config = { ...DEFAULT_CONFIG, ...opts };
   const dryRun = opts?.dryRun ?? true; // Task 1: default dry-run
+
+  // Resolve scopes to scan
+  const scopesToScan: (string | undefined)[] =
+    opts?.scopes && opts.scopes.length > 0
+      ? opts.scopes
+      : opts?.scope
+        ? [opts.scope]
+        : [undefined]; // undefined = all scopes
 
   // Set up LLM helper (null if disabled or no backend available)
   const hasBackend = opts?.subagentRuntime || config.llmProvider;
@@ -83,7 +97,7 @@ export async function runDream(
         })
       : null;
 
-  const adapter = new LanceDbAdapter();
+  const adapter = new LanceDbAdapter({ scanLimit: config.scanLimit });
 
   try {
     await adapter.connect();
@@ -112,8 +126,20 @@ export async function runDream(
       return result;
     }
 
-    // 讀取所有記憶
-    const memories = await adapter.listAllMemories(opts?.scope);
+    // 讀取指定 scopes 的記憶
+    let memories: MemoryRecord[] = [];
+    for (const s of scopesToScan) {
+      const scopeMemories = await adapter.listAllMemories(s);
+      memories.push(...scopeMemories);
+    }
+    
+    // Deduplicate by ID (in case same memory appears in multiple scope queries)
+    const seenIds = new Set<string>();
+    memories = memories.filter((m) => {
+      if (seenIds.has(m.id)) return false;
+      seenIds.add(m.id);
+      return true;
+    });
 
     // Phase 2: Scan — rules-based first pass
     const dedupPairs = detectDuplicates(memories, {

@@ -29,9 +29,10 @@ export interface LlmHelperConfig {
 }
 
 export const DEFAULT_LLM_CONFIG: LlmHelperConfig = {
-  model: "anthropic:claude-3-5-haiku",
+  model: "gpt-4o",
   maxCalls: 10,
   timeoutMs: 5_000,
+  llmProvider: "openai",
 };
 
 /** Provider-specific default models */
@@ -250,8 +251,9 @@ export class LlmHelper {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (this.config.llmApiKey) {
-      headers["Authorization"] = `Bearer ${this.config.llmApiKey}`;
+    const apiKey = this.config.llmApiKey || process.env.OPENAI_API_KEY;
+    if (apiKey) {
+      headers["Authorization"] = `Bearer ${apiKey}`;
     }
 
     const body = JSON.stringify({
@@ -294,8 +296,9 @@ export class LlmHelper {
       "Content-Type": "application/json",
       "anthropic-version": "2023-06-01",
     };
-    if (this.config.llmApiKey) {
-      headers["x-api-key"] = this.config.llmApiKey;
+    const apiKey = this.config.llmApiKey || process.env.ANTHROPIC_API_KEY;
+    if (apiKey) {
+      headers["x-api-key"] = apiKey;
     }
 
     const body = JSON.stringify({

@@ -51,16 +51,20 @@ export function parseMetadata(raw: string): ParsedMetadata {
 export interface LanceDbAdapterOptions {
   dbPath?: string;
   tableName?: string;
+  /** Max memories to scan (default: 10000) */
+  scanLimit?: number;
 }
 
 export class LanceDbAdapter {
   private readonly dbPath: string;
   private readonly tableName: string;
+  private readonly scanLimit: number;
   private db: lancedb.Connection | null = null;
 
   constructor(opts?: LanceDbAdapterOptions) {
     this.dbPath = opts?.dbPath ?? DEFAULT_DB_PATH;
     this.tableName = opts?.tableName ?? DEFAULT_TABLE_NAME;
+    this.scanLimit = opts?.scanLimit ?? 10000;
   }
 
   async connect(): Promise<void> {
@@ -128,8 +132,8 @@ export class LanceDbAdapter {
         ? "embedding"
         : null;
 
-    // 查詢所有記憶
-    let query = table.query();
+    // 查詢所有記憶（LanceDB 預設 limit=10，必須明確設定）
+    let query = table.query().limit(this.scanLimit);
     if (scope) {
       query = query.where(`scope = '${scope}'`);
     }

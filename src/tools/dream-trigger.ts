@@ -47,6 +47,7 @@ export function createDreamNowTool(
           pluginConfig["llmModel"] ?? "anthropic:claude-3-5-haiku",
         );
         const llmMaxCalls = Number(pluginConfig["llmMaxCalls"] ?? 10);
+        const scanLimit = Number(pluginConfig["scanLimit"] ?? 5000);
         const llmProvider = pluginConfig["llmProvider"] as
           | "openai"
           | "anthropic"
@@ -60,6 +61,7 @@ export function createDreamNowTool(
           dedupThreshold,
           maxChangesPerRun,
           autoMergeDuplicates,
+          scanLimit,
           llmEnabled,
           llmModel,
           llmMaxCalls,

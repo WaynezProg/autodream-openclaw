@@ -1,4 +1,5 @@
 import type { MemoryRecord } from "../lancedb-adapter.js";
+import type { LlmHelper } from "./llm-helper.js";
 
 export interface TimeFixEntry {
   memory: MemoryRecord;
@@ -108,4 +109,47 @@ export function detectRelativeTime(memories: MemoryRecord[]): TimeFixEntry[] {
   }
 
   return results;
+}
+
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Use LLM to resolve low-confidence time entries (最近/前陣子/recently).
+ * Updates entries in-place: resolved date set and confidence upgraded to "high".
+ * Returns the count of entries resolved by LLM.
+ */
+export async function resolveTimeWithLlm(
+  entries: TimeFixEntry[],
+  llm: LlmHelper | null,
+): Promise<number> {
+  if (!llm) return 0;
+
+  let resolved = 0;
+
+  for (const entry of entries) {
+    if (entry.confidence !== "low") continue;
+    if (llm.exhausted) break;
+
+    const refDate = formatDate(entry.memory.timestamp);
+    const prompt = [
+      `This memory mentions "${entry.original}". Based on the context, estimate the actual date.`,
+      `Return ONLY a date in YYYY-MM-DD format, or "unknown" if you cannot determine it.`,
+      "",
+      `Memory text: ${entry.memory.text}`,
+      `Memory timestamp (reference): ${refDate}`,
+    ].join("\n");
+
+    const response = await llm.ask(prompt);
+    if (response) {
+      const date = response.trim();
+      if (DATE_PATTERN.test(date)) {
+        entry.resolved = date;
+        entry.newText = entry.memory.text.replace(entry.original, date);
+        entry.confidence = "high";
+        resolved++;
+      }
+    }
+  }
+
+  return resolved;
 }

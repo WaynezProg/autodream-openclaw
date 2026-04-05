@@ -1,5 +1,6 @@
 import type { MemoryRecord } from "../lancedb-adapter.js";
 import { cosineSimilarity } from "./dedup-detector.js";
+import type { LlmHelper } from "./llm-helper.js";
 
 export interface ConflictPair {
   a: MemoryRecord;
@@ -83,7 +84,27 @@ const CONFLICT_RULES = buildRules();
 const SIM_LOW = 0.60;
 const SIM_HIGH = 0.85;
 
+/** Ambiguous pair: similarity 0.60-0.75 with no rule match — candidate for LLM confirmation */
+export interface AmbiguousPair {
+  a: MemoryRecord;
+  b: MemoryRecord;
+  similarity: number;
+}
+
+const SIM_AMBIGUOUS_HIGH = 0.75;
+
 export function detectConflicts(memories: MemoryRecord[]): ConflictPair[] {
+  return detectConflictsWithAmbiguous(memories).confirmed;
+}
+
+/**
+ * Returns both rule-confirmed conflicts and ambiguous pairs.
+ * Ambiguous pairs (sim 0.60-0.75, no rule match) can be passed to LLM.
+ */
+export function detectConflictsWithAmbiguous(memories: MemoryRecord[]): {
+  confirmed: ConflictPair[];
+  ambiguous: AmbiguousPair[];
+} {
   // Group by scope + category
   const groups = new Map<string, MemoryRecord[]>();
   for (const m of memories) {
@@ -96,7 +117,8 @@ export function detectConflicts(memories: MemoryRecord[]): ConflictPair[] {
     arr.push(m);
   }
 
-  const results: ConflictPair[] = [];
+  const confirmed: ConflictPair[] = [];
+  const ambiguous: AmbiguousPair[] = [];
 
   for (const group of groups.values()) {
     for (let i = 0; i < group.length; i++) {
@@ -109,20 +131,64 @@ export function detectConflicts(memories: MemoryRecord[]): ConflictPair[] {
         const sim = cosineSimilarity(a.vector, b.vector);
         if (sim < SIM_LOW || sim > SIM_HIGH) continue;
 
+        let matched = false;
         for (const rule of CONFLICT_RULES) {
           const reason = rule.test(a, b);
           if (reason) {
-            results.push({
+            confirmed.push({
               a,
               b,
               similarity: sim,
               reason,
               ruleMatched: rule.name,
             });
+            matched = true;
             break; // one rule per pair
           }
         }
+
+        // Ambiguous: in the lower similarity range with no rule match
+        if (!matched && sim <= SIM_AMBIGUOUS_HIGH) {
+          ambiguous.push({ a, b, similarity: sim });
+        }
       }
+    }
+  }
+
+  return { confirmed, ambiguous };
+}
+
+/**
+ * Use LLM to confirm whether ambiguous pairs are actually contradictory.
+ */
+export async function confirmConflictsWithLlm(
+  ambiguous: AmbiguousPair[],
+  llm: LlmHelper | null,
+): Promise<ConflictPair[]> {
+  if (!llm || ambiguous.length === 0) return [];
+
+  const results: ConflictPair[] = [];
+
+  for (const pair of ambiguous) {
+    if (llm.exhausted) break;
+
+    const prompt = [
+      "Are these two memories contradictory? Answer YES or NO, then explain in 1 sentence.",
+      "",
+      `Memory A: ${pair.a.text}`,
+      `Memory B: ${pair.b.text}`,
+    ].join("\n");
+
+    const response = await llm.ask(prompt);
+    if (response && /^YES\b/i.test(response.trim())) {
+      const explanation = response.replace(/^YES[.:,\s]*/i, "").trim();
+      results.push({
+        a: pair.a,
+        b: pair.b,
+        similarity: pair.similarity,
+        reason: explanation || "LLM confirmed contradiction",
+        ruleMatched: "llm-confirmed",
+      });
     }
   }
 

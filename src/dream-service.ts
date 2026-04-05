@@ -100,6 +100,8 @@ export function createDreamService(api: OpenClawPluginApi): OpenClawPluginServic
 
     logger.info?.("[autodream] Starting scheduled dream run...");
 
+    const subagentRuntime = (api as any).runtime?.subagent ?? null;
+    const pluginConfig = api.pluginConfig ?? {};
     const result = await runDream({
       dryRun:
         !config.autoMergeDuplicates &&
@@ -110,6 +112,10 @@ export function createDreamService(api: OpenClawPluginApi): OpenClawPluginServic
       staleAgeDays: config.staleAgeDays,
       dedupThreshold: config.dedupThreshold,
       maxChangesPerRun: config.maxChangesPerRun,
+      llmProvider: pluginConfig["llmProvider"] as "openai" | "anthropic" | undefined,
+      llmBaseUrl: pluginConfig["llmBaseUrl"] as string | undefined,
+      llmApiKey: pluginConfig["llmApiKey"] as string | undefined,
+      subagentRuntime,
     });
 
     await writeReport(result.report);

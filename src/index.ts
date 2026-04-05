@@ -13,8 +13,9 @@ export default definePluginEntry({
   register(api) {
     const pluginConfig = api.pluginConfig ?? {};
 
-    // 註冊 dream_now tool
-    api.registerTool(createDreamNowTool(pluginConfig), {
+    // 註冊 dream_now tool (pass subagent runtime for LLM calls)
+    const subagentRuntime = (api as any).runtime?.subagent ?? null;
+    api.registerTool(createDreamNowTool(pluginConfig, subagentRuntime), {
       names: ["dream_now"],
     });
 

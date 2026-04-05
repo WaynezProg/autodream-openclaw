@@ -2,6 +2,7 @@ import type { DedupPair } from "../analysis/dedup-detector.js";
 import type { TimeFixEntry } from "../analysis/time-normalizer.js";
 import type { ConflictPair } from "../analysis/conflict-detector.js";
 import type { StaleEntry } from "../analysis/staleness-scorer.js";
+import type { MergeResult } from "../analysis/dedup-merger.js";
 
 export interface DreamReport {
   timestamp: string;
@@ -43,6 +44,15 @@ export interface DreamReport {
       factors: { ageDays: number; accessCount: number; importance: number };
     }>;
   };
+  merges?: {
+    count: number;
+    entries: Array<{
+      keepId: string;
+      deleteIds: string[];
+      mergedText: string;
+    }>;
+  };
+  llmCallsUsed?: number;
   dryRun: boolean;
 }
 
@@ -54,6 +64,8 @@ export function buildReport(
   staleItems: StaleEntry[],
   dryRun: boolean,
   autoMerge: boolean,
+  merges?: MergeResult[],
+  llmCallsUsed?: number,
 ): DreamReport {
   return {
     timestamp: new Date().toISOString(),
@@ -99,6 +111,18 @@ export function buildReport(
         },
       })),
     },
+    merges:
+      merges && merges.length > 0
+        ? {
+            count: merges.length,
+            entries: merges.map((m) => ({
+              keepId: m.keepId,
+              deleteIds: m.originalsToDelete,
+              mergedText: truncate(m.mergedText, 200),
+            })),
+          }
+        : undefined,
+    llmCallsUsed,
     dryRun,
   };
 }
@@ -177,6 +201,25 @@ export function formatReportMarkdown(report: DreamReport): string {
       lines.push(`  ${entry.text}`);
       lines.push(``);
     }
+  }
+
+  if (report.merges && report.merges.count > 0) {
+    lines.push(``);
+    lines.push(`## LLM Merges (${report.merges.count})`);
+    lines.push(``);
+    for (const entry of report.merges.entries) {
+      lines.push(
+        `- Keep \`${entry.keepId}\`, delete ${entry.deleteIds.map((id) => `\`${id}\``).join(", ")}`,
+      );
+      lines.push(`  Merged: ${entry.mergedText}`);
+      lines.push(``);
+    }
+  }
+
+  if (report.llmCallsUsed !== undefined) {
+    lines.push(``);
+    lines.push(`---`);
+    lines.push(`*LLM calls used: ${report.llmCallsUsed}*`);
   }
 
   return lines.join("\n");

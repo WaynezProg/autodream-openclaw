@@ -172,6 +172,27 @@ export async function runDream(
       }
     }
 
+    // Phase 3: Apply time fixes (when autoFixTime is on and not dry-run)
+    let timeFixesApplied = 0;
+    if (config.autoFixTime && !dryRun) {
+      const highConfidence = timeIssues.filter(
+        (t) => t.confidence === "high" && t.resolved && t.newText !== t.memory.text,
+      );
+      const toApply = highConfidence.slice(0, config.maxChangesPerRun);
+      for (const entry of toApply) {
+        try {
+          const ok = await adapter.updateMemoryText(entry.memory.id, entry.newText);
+          if (ok) {
+            timeFixesApplied++;
+          } else {
+            console.error(`[autodream] Failed to update ${entry.memory.id}`);
+          }
+        } catch (err) {
+          console.error(`[autodream] Error updating ${entry.memory.id}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    }
+
     // 限制報告數量
     const limitedPairs = dedupPairs.slice(0, config.maxChangesPerRun);
 
@@ -185,6 +206,7 @@ export async function runDream(
       config.autoMergeDuplicates,
       merges.length > 0 ? merges : undefined,
       llm?.used,
+      timeFixesApplied,
     );
 
     const result: DreamRunResult = {

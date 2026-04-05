@@ -153,6 +153,27 @@ export class LanceDbAdapter {
     }));
   }
 
+  /**
+   * Update the text field of a memory record.
+   * Note: Does NOT re-embed — vector will be slightly stale but semantically similar.
+   * Returns true if the update was applied.
+   */
+  async updateMemoryText(id: string, newText: string): Promise<boolean> {
+    const db = this.ensureConnected();
+    try {
+      const table = await db.openTable(this.tableName);
+      const escapedId = id.replace(/'/g, "''");
+      await table.update({
+        where: `id = '${escapedId}'`,
+        values: { text: newText },
+      });
+      return true;
+    } catch (err) {
+      console.error(`[lancedb-adapter] updateMemoryText error for ${id}: ${err instanceof Error ? err.message : String(err)}`);
+      return false;
+    }
+  }
+
   async countMemories(scope?: string): Promise<number> {
     const db = this.ensureConnected();
     try {

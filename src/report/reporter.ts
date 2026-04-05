@@ -53,6 +53,7 @@ export interface DreamReport {
     }>;
   };
   llmCallsUsed?: number;
+  timeFixesApplied?: number;
   dryRun: boolean;
 }
 
@@ -66,6 +67,7 @@ export function buildReport(
   autoMerge: boolean,
   merges?: MergeResult[],
   llmCallsUsed?: number,
+  timeFixesApplied?: number,
 ): DreamReport {
   return {
     timestamp: new Date().toISOString(),
@@ -123,6 +125,7 @@ export function buildReport(
           }
         : undefined,
     llmCallsUsed,
+    timeFixesApplied: timeFixesApplied ?? 0,
     dryRun,
   };
 }
@@ -154,7 +157,10 @@ export function formatReportMarkdown(report: DreamReport): string {
     }
   }
 
-  lines.push(`## Time Issues (${report.timeIssues.count})`);
+  const timeFixLabel = report.timeFixesApplied
+    ? ` — ✅ ${report.timeFixesApplied} fixed`
+    : "";
+  lines.push(`## Time Issues (${report.timeIssues.count}${timeFixLabel})`);
   lines.push(``);
   if (report.timeIssues.entries.length === 0) {
     lines.push("No relative time expressions found.");

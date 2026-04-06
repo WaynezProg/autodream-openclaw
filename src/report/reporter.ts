@@ -3,6 +3,8 @@ import type { TimeFixEntry } from "../analysis/time-normalizer.js";
 import type { ConflictPair } from "../analysis/conflict-detector.js";
 import type { StaleEntry } from "../analysis/staleness-scorer.js";
 import type { MergeResult } from "../analysis/dedup-merger.js";
+import type { DeepPromotionResult } from "../analysis/deep-promoter.js";
+import type { RemReflection } from "../analysis/rem-reflector.js";
 
 export interface DreamReport {
   timestamp: string;
@@ -54,6 +56,19 @@ export interface DreamReport {
   };
   llmCallsUsed?: number;
   timeFixesApplied?: number;
+  promotions?: {
+    count: number;
+    entries: Array<{
+      memoryId: string;
+      score: number;
+      refinedText: string;
+    }>;
+  };
+  reflection?: {
+    period: string;
+    themes: Array<{ theme: string; queryCount: number; strength: number }>;
+    summary: string;
+  };
   dryRun: boolean;
 }
 
@@ -68,6 +83,8 @@ export function buildReport(
   merges?: MergeResult[],
   llmCallsUsed?: number,
   timeFixesApplied?: number,
+  promotionResult?: DeepPromotionResult,
+  reflection?: RemReflection | null,
 ): DreamReport {
   return {
     timestamp: new Date().toISOString(),
@@ -126,6 +143,29 @@ export function buildReport(
         : undefined,
     llmCallsUsed,
     timeFixesApplied: timeFixesApplied ?? 0,
+    promotions:
+      promotionResult && promotionResult.count > 0
+        ? {
+            count: promotionResult.count,
+            entries: promotionResult.entries.map((e) => ({
+              memoryId: e.memoryId,
+              score: round(e.score, 4),
+              refinedText: truncate(e.refinedText, 200),
+            })),
+          }
+        : undefined,
+    reflection:
+      reflection
+        ? {
+            period: reflection.period,
+            themes: reflection.themes.map((t) => ({
+              theme: t.theme,
+              queryCount: t.queryCount,
+              strength: round(t.strength, 4),
+            })),
+            summary: reflection.summary,
+          }
+        : undefined,
     dryRun,
   };
 }
@@ -218,6 +258,36 @@ export function formatReportMarkdown(report: DreamReport): string {
         `- Keep \`${entry.keepId}\`, delete ${entry.deleteIds.map((id) => `\`${id}\``).join(", ")}`,
       );
       lines.push(`  Merged: ${entry.mergedText}`);
+      lines.push(``);
+    }
+  }
+
+  if (report.promotions && report.promotions.count > 0) {
+    lines.push(``);
+    lines.push(`## Deep Promotions (${report.promotions.count})`);
+    lines.push(``);
+    for (const entry of report.promotions.entries) {
+      lines.push(
+        `- \`${entry.memoryId}\` — score: **${entry.score.toFixed(4)}**`,
+      );
+      lines.push(`  ${entry.refinedText}`);
+      lines.push(``);
+    }
+  }
+
+  if (report.reflection) {
+    lines.push(``);
+    lines.push(`## REM Reflection (${report.reflection.period})`);
+    lines.push(``);
+    if (report.reflection.themes.length > 0) {
+      const themeStr = report.reflection.themes
+        .map((t) => `${t.theme} (${t.queryCount}次)`)
+        .join(", ");
+      lines.push(`**Themes:** ${themeStr}`);
+      lines.push(``);
+    }
+    if (report.reflection.summary) {
+      lines.push(`> ${report.reflection.summary}`);
       lines.push(``);
     }
   }

@@ -24,6 +24,21 @@ export interface DreamServiceConfig {
   scanLimit: number;
   /** Scopes allowed for background runs */
   allowedScopes: string[];
+
+  // Deep Promotion
+  deepEnabled: boolean;
+  deepMinScore: number;
+  deepMinRecallCount: number;
+  deepMinUniqueQueries: number;
+  deepMaxPromotionsPerRun: number;
+
+  // REM Reflection
+  remEnabled: boolean;
+  remMinWeeklyRecalls: number;
+
+  // Recall Tracker
+  recallLogDir: string;
+  recallMaxAgeDays: number;
 }
 
 const DEFAULT_CONFIG: DreamServiceConfig = {
@@ -38,6 +53,21 @@ const DEFAULT_CONFIG: DreamServiceConfig = {
   maxChangesPerRun: 20,
   scanLimit: 5000,
   allowedScopes: ["global"],
+
+  // Deep Promotion
+  deepEnabled: true,
+  deepMinScore: 0.65,
+  deepMinRecallCount: 3,
+  deepMinUniqueQueries: 2,
+  deepMaxPromotionsPerRun: 5,
+
+  // REM Reflection
+  remEnabled: true,
+  remMinWeeklyRecalls: 10,
+
+  // Recall Tracker
+  recallLogDir: path.join(os.homedir(), ".openclaw", "memory", "autodream-reports"),
+  recallMaxAgeDays: 90,
 };
 
 export function createDreamService(api: OpenClawPluginApi): OpenClawPluginService {
@@ -131,7 +161,8 @@ export function createDreamService(api: OpenClawPluginApi): OpenClawPluginServic
       dryRun:
         !config.autoMergeDuplicates &&
         !config.autoFixTime &&
-        !config.autoDeleteStale,
+        !config.autoDeleteStale &&
+        !config.deepEnabled,
       autoMergeDuplicates: config.autoMergeDuplicates,
       autoFixTime: config.autoFixTime,
       staleAgeDays: config.staleAgeDays,
@@ -145,6 +176,18 @@ export function createDreamService(api: OpenClawPluginApi): OpenClawPluginServic
       llmBaseUrl: pluginConfig["llmBaseUrl"] as string | undefined,
       llmApiKey: pluginConfig["llmApiKey"] as string | undefined,
       subagentRuntime,
+
+      // Deep Promotion
+      deepEnabled: config.deepEnabled,
+      deepMinScore: config.deepMinScore,
+      deepMinRecallCount: config.deepMinRecallCount,
+      deepMinUniqueQueries: config.deepMinUniqueQueries,
+      deepMaxPromotionsPerRun: config.deepMaxPromotionsPerRun,
+      recallLogDir: config.recallLogDir,
+
+      // REM Reflection
+      remEnabled: config.remEnabled,
+      remMinWeeklyRecalls: config.remMinWeeklyRecalls,
     });
 
     await writeReport(result.report);

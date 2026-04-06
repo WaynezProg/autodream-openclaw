@@ -14,6 +14,17 @@ import {
   type LlmProvider,
 } from "./analysis/llm-helper.js";
 import { buildReport, type DreamReport } from "./report/reporter.js";
+import {
+  runDeepPromotion,
+  type DeepPromotionResult,
+  type DeepPromotionConfig,
+} from "./analysis/deep-promoter.js";
+import {
+  runRemReflection,
+  isSunday,
+  type RemReflection,
+} from "./analysis/rem-reflector.js";
+import { RecallTracker } from "./tracking/recall-tracker.js";
 
 export interface DreamEngineConfig {
   dedupThreshold: number;
@@ -35,7 +46,26 @@ export interface DreamEngineConfig {
   llmBaseUrl?: string;
   /** API key for cloud LLM providers */
   llmApiKey?: string;
+
+  // Deep Promotion
+  deepEnabled: boolean;
+  deepMinScore: number;
+  deepMinRecallCount: number;
+  deepMinUniqueQueries: number;
+  deepMaxPromotionsPerRun: number;
+  deepRecencyHalfLifeDays: number;
+
+  // REM Reflection
+  remEnabled: boolean;
+  remMinWeeklyRecalls: number;
+
+  // Recall Tracker
+  recallLogDir: string;
+  recallMaxAgeDays: number;
 }
+
+import * as os from "node:os";
+import * as path from "node:path";
 
 const DEFAULT_CONFIG: DreamEngineConfig = {
   dedupThreshold: 0.90,
@@ -47,12 +77,30 @@ const DEFAULT_CONFIG: DreamEngineConfig = {
   llmEnabled: true,
   llmModel: DEFAULT_LLM_CONFIG.model,
   llmMaxCalls: DEFAULT_LLM_CONFIG.maxCalls,
+
+  // Deep Promotion
+  deepEnabled: true,
+  deepMinScore: 0.65,
+  deepMinRecallCount: 3,
+  deepMinUniqueQueries: 2,
+  deepMaxPromotionsPerRun: 5,
+  deepRecencyHalfLifeDays: 14,
+
+  // REM Reflection
+  remEnabled: true,
+  remMinWeeklyRecalls: 10,
+
+  // Recall Tracker
+  recallLogDir: path.join(os.homedir(), ".openclaw", "memory", "autodream-reports"),
+  recallMaxAgeDays: 90,
 };
 
 export interface DreamRunResult {
   report: DreamReport;
   merges?: MergeResult[];
   llmCallsUsed?: number;
+  promotions?: DeepPromotionResult;
+  reflection?: RemReflection | null;
   error?: string;
 }
 
@@ -71,6 +119,14 @@ export async function runDream(
     dryRun?: boolean;
     /** Pass the subagent runtime from plugin API for LLM calls */
     subagentRuntime?: SubagentRuntime | null;
+    /** Skip Deep Promotion phase */
+    skipDeep?: boolean;
+    /** Skip REM Reflection phase */
+    skipRem?: boolean;
+    /** Force REM Reflection regardless of day */
+    forceRem?: boolean;
+    /** Workspace path for MEMORY.md / DREAMS.md */
+    workspacePath?: string;
   },
 ): Promise<DreamRunResult> {
   const config = { ...DEFAULT_CONFIG, ...opts };
@@ -193,6 +249,73 @@ export async function runDream(
       }
     }
 
+    // Phase 4: Deep Promotion
+    let promotions: DeepPromotionResult | undefined;
+    if (config.deepEnabled && !opts?.skipDeep && !dryRun) {
+      try {
+        const recallTracker = new RecallTracker(config.recallLogDir);
+        const recallStats = await recallTracker.getStats({
+          minRecalls: config.deepMinRecallCount,
+        });
+
+        if (recallStats.length > 0) {
+          const deepConfig: Partial<DeepPromotionConfig> = {
+            minScore: config.deepMinScore,
+            minRecallCount: config.deepMinRecallCount,
+            minUniqueQueries: config.deepMinUniqueQueries,
+            maxPromotionsPerRun: config.deepMaxPromotionsPerRun,
+            recencyHalfLifeDays: config.deepRecencyHalfLifeDays,
+          };
+          promotions = await runDeepPromotion({
+            memories,
+            recallStats,
+            llm,
+            config: deepConfig,
+            workspacePath: opts?.workspacePath,
+          });
+        }
+      } catch (err) {
+        console.error(
+          `[autodream] Deep Promotion error: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
+    // Phase 5: REM Reflection (Sunday only, or forced)
+    let reflection: RemReflection | null = null;
+    const shouldRunRem =
+      config.remEnabled &&
+      !opts?.skipRem &&
+      !dryRun &&
+      (opts?.forceRem || isSunday());
+
+    if (shouldRunRem) {
+      try {
+        const recallTracker = new RecallTracker(config.recallLogDir);
+        const now = Date.now();
+        const weekAgo = now - 7 * 86_400_000;
+        const twoWeeksAgo = now - 14 * 86_400_000;
+
+        const currentWeekEntries = await recallTracker.readLog(weekAgo);
+        const allRecent = await recallTracker.readLog(twoWeeksAgo);
+        const previousWeekEntries = allRecent.filter(
+          (e) => e.ts >= twoWeeksAgo && e.ts < weekAgo,
+        );
+
+        reflection = await runRemReflection({
+          currentWeekEntries,
+          previousWeekEntries,
+          llm,
+          config: { minWeeklyRecalls: config.remMinWeeklyRecalls },
+          workspacePath: opts?.workspacePath,
+        });
+      } catch (err) {
+        console.error(
+          `[autodream] REM Reflection error: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
     // 限制報告數量
     const limitedPairs = dedupPairs.slice(0, config.maxChangesPerRun);
 
@@ -207,12 +330,16 @@ export async function runDream(
       merges.length > 0 ? merges : undefined,
       llm?.used,
       timeFixesApplied,
+      promotions,
+      reflection,
     );
 
     const result: DreamRunResult = {
       report,
       merges: merges.length > 0 ? merges : undefined,
       llmCallsUsed: llm?.used,
+      promotions,
+      reflection,
     };
     lastRunResult = result;
     return result;

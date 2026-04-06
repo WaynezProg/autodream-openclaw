@@ -149,6 +149,32 @@ describe("computeScore", () => {
 });
 
 describe("selectCandidates", () => {
+  it("should exclude memories from non-promotable scopes", () => {
+    const memories = [
+      makeMemory("m1", { scope: "agent:kurisu" }),
+      makeMemory("m2", { scope: "personal" }),
+      makeMemory("m3", { scope: "global" }),
+    ];
+    const statsMap = new Map([
+      ["m1", makeStats("m1", { totalRecalls: 10, uniqueQueries: 5, avgScore: 0.95, daySpan: 7 })],
+      ["m2", makeStats("m2", { totalRecalls: 10, uniqueQueries: 5, avgScore: 0.95, daySpan: 7 })],
+      ["m3", makeStats("m3", { totalRecalls: 10, uniqueQueries: 5, avgScore: 0.95, daySpan: 7 })],
+    ]);
+    const result = selectCandidates(memories, statsMap);
+    // Only m3 (global) should be included
+    expect(result).toHaveLength(1);
+    expect(result[0].memory.id).toBe("m3");
+  });
+
+  it("should include memories from business scope", () => {
+    const memories = [makeMemory("m1", { scope: "business" })];
+    const statsMap = new Map([
+      ["m1", makeStats("m1", { totalRecalls: 10, uniqueQueries: 5, avgScore: 0.95, daySpan: 7 })],
+    ]);
+    const result = selectCandidates(memories, statsMap);
+    expect(result).toHaveLength(1);
+  });
+
   it("should exclude memories below minRecallCount", () => {
     const memories = [makeMemory("m1")];
     const statsMap = new Map([["m1", makeStats("m1", { totalRecalls: 1 })]]);

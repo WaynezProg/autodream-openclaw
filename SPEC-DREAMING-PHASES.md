@@ -243,6 +243,23 @@ interface DeepPromotionConfig {
 
 **寫入位置：** append 到 MEMORY.md 尾部的 `## Deep Promotion（auto-promoted）` section。若 section 不存在則建立。
 
+#### ⚠️ Scope 限制（重要）
+
+**只升級 `global` 和 `business` scope 的記憶。** Agent-specific scope（如 `agent:kurisu`、`agent:yukino` 等）和 `personal` scope 的記憶一律不寫入 MEMORY.md。
+
+原因：MEMORY.md 是 workspace 層級的共用檔案，所有 agent 啟動時都會讀到。如果把 agent-specific 記憶寫進去，等於 scope 洩漏——其他 agent 會看到不屬於自己的記憶。
+
+```typescript
+const PROMOTABLE_SCOPES = ["global", "business"];
+
+// 在篩選 candidates 時過濾
+candidates = candidates.filter(c => 
+  PROMOTABLE_SCOPES.includes(c.memory.scope)
+);
+```
+
+如果未來需要升級 agent-specific 記憶，應寫入各 agent 自己的目錄（如 `agents/<agentId>/MEMORY.md`），但 v1 不做。
+
 #### 2.6 LLM 精煉
 
 升級前用 LLM 把記憶精煉成適合 MEMORY.md 的格式：
@@ -324,6 +341,15 @@ interface ThemeEntry {
 
 > 本週的焦點從代購營運延伸到基礎設施最佳化。autoDream 和 LCM 的反覆查詢
 > 顯示系統正在進入一個記憶管理的調整期。
+```
+
+#### ⚠️ Scope 限制
+
+**Theme 分析只納入 `global` 和 `business` scope 的 recall logs。** Agent-specific scope 的查詢不列入主題統計，避免在共用的 DREAMS.md 中洩漏 agent 專屬資訊。
+
+```typescript
+const REFLECTABLE_SCOPES = ["global", "business"];
+// 讀取 recall log 時過濾 scope
 ```
 
 **檔案位置：** workspace root 的 `DREAMS.md`。若不存在則建立，header：
@@ -537,6 +563,7 @@ Phase 4: 整合 & Config
 8. **Build 目標** — TypeScript ESM，跟現有 tsconfig.json 一致（target ES2022, module Node16）
 9. **測試** — 用 vitest，mock LanceDB adapter 和 LlmHelper
 10. **workspace 路徑** — MEMORY.md 和 DREAMS.md 的路徑從 OpenClaw config 的 `agents.defaults.workspace` 取得，fallback `~/.openclaw/workspace`
+11. **Scope 邊界** — Deep Promotion 和 REM Reflection 都只處理 `global` + `business` scope 的記憶/recall logs。Agent-specific scope（`agent:*`）和 `personal` scope 不寫入共用 md 檔案，避免 scope 洩漏。這是硬性規則，不可透過 config 關閉
 
 ---
 

@@ -5,6 +5,14 @@ import type { RecallLogEntry } from "../tracking/recall-tracker.js";
 import type { LlmHelper } from "./llm-helper.js";
 import { extractKeywords } from "./dedup-detector.js";
 
+// NOTE: Spec requires filtering recall logs to only global+business scope.
+// v1 limitation: RecallLogEntry does not store per-hit scope, so we cannot
+// filter here. The Deep Promoter has its own scope gate (PROMOTABLE_SCOPES)
+// which prevents agent-specific memories from reaching shared MEMORY.md.
+// For DREAMS.md, this is a cosmetic concern — themes may include queries
+// from agent-specific contexts. This will be addressed when RecallHit gains
+// an optional `scope` field.
+
 // ── Types ──────────────────────────────────────────────
 
 export interface ThemeEntry {

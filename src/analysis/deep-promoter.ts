@@ -101,6 +101,11 @@ export function computeScore(signals: DeepSignals): number {
   );
 }
 
+// ── Scope restriction ──────────────────────────────────
+
+/** Only promote memories from these scopes to shared MEMORY.md */
+const PROMOTABLE_SCOPES = ["global", "business"];
+
 // ── Candidate selection ────────────────────────────────
 
 export function selectCandidates(
@@ -113,6 +118,9 @@ export function selectCandidates(
   const candidates: DeepCandidate[] = [];
 
   for (const memory of memories) {
+    // Gate: scope restriction — only global + business
+    if (!PROMOTABLE_SCOPES.includes(memory.scope)) continue;
+
     const stats = statsMap.get(memory.id);
     if (!stats) continue;
 

@@ -31,7 +31,7 @@ export default definePluginEntry({
     });
 
     // 註冊 dream_status tool
-    api.registerTool(createDreamStatusTool(), {
+    api.registerTool(createDreamStatusTool(recallLogDir), {
       names: ["dream_status"],
     });
 

@@ -25,7 +25,8 @@
       "llmModel": { "type": "string", "default": "gpt-4o", "description": "LLM model identifier" },
       "llmBaseUrl": { "type": "string", "description": "Custom API base URL (e.g. Ollama)" },
       "llmApiKey": { "type": "string", "description": "API key (falls back to OPENAI_API_KEY / ANTHROPIC_API_KEY env var)" },
-      "llmMaxCalls": { "type": "number", "default": 10, "description": "Max LLM calls per dream run" }
+      "llmMaxCalls": { "type": "number", "default": 10, "description": "Max LLM calls per dream run" },
+      "embeddingModel": { "type": "string", "default": "text-embedding-3-small", "description": "OpenAI embedding model for re-embedding merged memories. Requires OPENAI_API_KEY. Default: text-embedding-3-small" }
     }
   }
 }

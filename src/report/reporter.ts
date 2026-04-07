@@ -2,6 +2,7 @@ import type { DedupPair } from "../analysis/dedup-detector.js";
 import type { TimeFixEntry } from "../analysis/time-normalizer.js";
 import type { ConflictPair } from "../analysis/conflict-detector.js";
 import type { StaleEntry } from "../analysis/staleness-scorer.js";
+import type { MemoryRecord } from "../lancedb-adapter.js";
 import type { MergeResult } from "../analysis/dedup-merger.js";
 import type { DeepPromotionResult } from "../analysis/deep-promoter.js";
 import type { RemReflection } from "../analysis/rem-reflector.js";
@@ -70,6 +71,7 @@ export interface DreamReport {
     summary: string;
   };
   noiseDeleted?: number;
+  noiseEntries?: Array<{ id: string; text: string }>;
   reEmbedded?: number;
   dryRun: boolean;
 }
@@ -89,6 +91,7 @@ export function buildReport(
   reflection?: RemReflection | null,
   noiseDeleted?: number,
   reEmbedded?: number,
+  noiseMemories?: MemoryRecord[],
 ): DreamReport {
   return {
     timestamp: new Date().toISOString(),
@@ -148,6 +151,13 @@ export function buildReport(
     llmCallsUsed,
     timeFixesApplied: timeFixesApplied ?? 0,
     noiseDeleted: noiseDeleted ?? 0,
+    noiseEntries:
+      noiseMemories && noiseMemories.length > 0
+        ? noiseMemories.slice(0, 5).map((m) => ({
+            id: m.id.slice(0, 8),
+            text: truncate(m.text, 80),
+          }))
+        : undefined,
     reEmbedded: reEmbedded ?? 0,
     promotions:
       promotionResult && promotionResult.count > 0
@@ -306,9 +316,15 @@ export function formatReportMarkdown(report: DreamReport): string {
   if (report.noiseDeleted && report.noiseDeleted > 0) {
     lines.push(``);
     lines.push(
-      `## Noise Cleaned: ${report.noiseDeleted}${report.dryRun ? " (would delete)" : " deleted"}`,
+      `### Noise Deleted (${report.noiseDeleted})${report.dryRun ? " (would delete)" : ""}`,
     );
     lines.push(``);
+    if (report.noiseEntries && report.noiseEntries.length > 0) {
+      for (const entry of report.noiseEntries) {
+        lines.push(`- \`${entry.id}\` ${entry.text}`);
+      }
+      lines.push(``);
+    }
   }
 
   if (report.llmCallsUsed !== undefined) {

@@ -201,6 +201,16 @@ openclaw dream --no-dry-run
 | `llmApiKey` | string | - | API key（fallback 到環境變數） |
 | `llmMaxCalls` | number | 10 | 每次最多 LLM 呼叫數 |
 
+### Embedding 設定
+
+| 選項 | 類型 | 預設 | 說明 |
+|------|------|------|------|
+| `embeddingModel` | string | `"text-embedding-3-small"` | OpenAI embedding model，用於 merge 後 re-embed |
+
+> **注意：** re-embed 功能（merge 後重新產生 embedding）依賴 `OPENAI_API_KEY` 環境變數。
+> `embeddingModel` 可透過 plugin config 設定，預設為 `text-embedding-3-small`。
+> 若未設定 `OPENAI_API_KEY`，re-embed 會 skip 並輸出 warning，不影響其他功能。
+
 ### Recall Tracker 設定
 
 | 選項 | 類型 | 預設 | 說明 |

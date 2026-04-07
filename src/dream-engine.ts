@@ -409,6 +409,7 @@ export async function runDream(
       reflection,
       noiseDeleted,
       reEmbedded,
+      noiseMemories,
     );
 
     const result: DreamRunResult = {

@@ -40,6 +40,7 @@ const parameters = Type.Object({
 export function createDreamNowTool(
   pluginConfig: Record<string, unknown>,
   subagentRuntime?: unknown,
+  embedder?: { embed(text: string): Promise<number[]> },
 ): (ctx: OpenClawPluginToolContext) => AnyAgentTool {
   return (_ctx: OpenClawPluginToolContext) =>
     ({
@@ -112,6 +113,7 @@ export function createDreamNowTool(
           llmBaseUrl,
           llmApiKey,
           subagentRuntime: subagentRuntime as any,
+          embedder,
           skipDeep: params.skipDeep,
           skipRem: params.skipRem,
           forceRem: params.forceRem,

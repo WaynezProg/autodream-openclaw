@@ -69,6 +69,8 @@ export interface DreamReport {
     themes: Array<{ theme: string; queryCount: number; strength: number }>;
     summary: string;
   };
+  noiseDeleted?: number;
+  reEmbedded?: number;
   dryRun: boolean;
 }
 
@@ -85,6 +87,8 @@ export function buildReport(
   timeFixesApplied?: number,
   promotionResult?: DeepPromotionResult,
   reflection?: RemReflection | null,
+  noiseDeleted?: number,
+  reEmbedded?: number,
 ): DreamReport {
   return {
     timestamp: new Date().toISOString(),
@@ -143,6 +147,8 @@ export function buildReport(
         : undefined,
     llmCallsUsed,
     timeFixesApplied: timeFixesApplied ?? 0,
+    noiseDeleted: noiseDeleted ?? 0,
+    reEmbedded: reEmbedded ?? 0,
     promotions:
       promotionResult && promotionResult.count > 0
         ? {
@@ -290,6 +296,19 @@ export function formatReportMarkdown(report: DreamReport): string {
       lines.push(`> ${report.reflection.summary}`);
       lines.push(``);
     }
+  }
+
+  if (report.reEmbedded && report.reEmbedded > 0) {
+    lines.push(``);
+    lines.push(`*Re-embedded: ${report.reEmbedded} memories*`);
+  }
+
+  if (report.noiseDeleted && report.noiseDeleted > 0) {
+    lines.push(``);
+    lines.push(
+      `## Noise Cleaned: ${report.noiseDeleted}${report.dryRun ? " (would delete)" : " deleted"}`,
+    );
+    lines.push(``);
   }
 
   if (report.llmCallsUsed !== undefined) {

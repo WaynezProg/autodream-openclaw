@@ -26,7 +26,35 @@ export default definePluginEntry({
     // runtime.subagent is not in the public SDK types but provided at runtime
     const subagentRuntime =
       (api as unknown as { runtime?: { subagent?: unknown } }).runtime?.subagent ?? null;
-    api.registerTool(createDreamNowTool(pluginConfig, subagentRuntime), {
+
+    // Initialize embedder for re-embedding after merge
+    const embeddingModel =
+      (pluginConfig as Record<string, unknown>).embeddingModel as string | undefined ??
+      "text-embedding-3-small";
+    const openaiApiKey = process.env.OPENAI_API_KEY;
+    const embedder = openaiApiKey
+      ? {
+          async embed(text: string): Promise<number[]> {
+            const res = await fetch("https://api.openai.com/v1/embeddings", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${openaiApiKey}`,
+              },
+              body: JSON.stringify({ model: embeddingModel, input: text }),
+            });
+            if (!res.ok) {
+              throw new Error(`Embedding API error: ${res.status} ${res.statusText}`);
+            }
+            const json = (await res.json()) as {
+              data: Array<{ embedding: number[] }>;
+            };
+            return json.data[0].embedding;
+          },
+        }
+      : undefined;
+
+    api.registerTool(createDreamNowTool(pluginConfig, subagentRuntime, embedder), {
       names: ["dream_now"],
     });
 
@@ -77,7 +105,7 @@ export default definePluginEntry({
     });
 
     // Task 3: 啟動背景排程服務
-    api.registerService(createDreamService(api));
+    api.registerService(createDreamService(api, embedder));
 
     // Task 4: 註冊 CLI 命令
     api.registerCli(

@@ -5,7 +5,11 @@ import {
   detectConflictsWithAmbiguous,
   confirmConflictsWithLlm,
 } from "./analysis/conflict-detector.js";
-import { scoreAndFilterStale } from "./analysis/staleness-scorer.js";
+import {
+  scoreAndFilterStale,
+  detectNoiseMemories,
+  type NoisePattern,
+} from "./analysis/staleness-scorer.js";
 import { mergeWithLlm, type MergeResult } from "./analysis/dedup-merger.js";
 import {
   LlmHelper,
@@ -58,6 +62,12 @@ export interface DreamEngineConfig {
   // REM Reflection
   remEnabled: boolean;
   remMinWeeklyRecalls: number;
+
+  // Embedder for re-embedding after merge
+  embedder?: { embed(text: string): Promise<number[]> };
+
+  // Noise Filter
+  noisePatterns?: NoisePattern[];
 
   // Recall Tracker
   recallLogDir: string;
@@ -197,6 +207,28 @@ export async function runDream(
       return true;
     });
 
+    // Phase 1.5: Noise Filter — detect and remove noise memories before analysis
+    const noiseMemories = detectNoiseMemories(memories, config.noisePatterns);
+    let noiseDeleted = 0;
+    if (noiseMemories.length > 0 && !dryRun) {
+      for (const m of noiseMemories) {
+        try {
+          const ok = await adapter.deleteMemory(m.id);
+          if (ok) noiseDeleted++;
+        } catch (err) {
+          console.error(
+            `[autodream] Failed to delete noise memory ${m.id}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+      // Remove deleted noise memories from the working set
+      const noiseIds = new Set(noiseMemories.map((m) => m.id));
+      memories = memories.filter((m) => !noiseIds.has(m.id));
+    } else if (noiseMemories.length > 0) {
+      // dry-run: just count
+      noiseDeleted = noiseMemories.length;
+    }
+
     // Phase 2: Scan — rules-based first pass
     const dedupPairs = detectDuplicates(memories, {
       vectorThreshold: config.dedupThreshold,
@@ -225,6 +257,49 @@ export async function runDream(
           dedupPairs.slice(0, config.maxChangesPerRun),
           llm,
         );
+      }
+    }
+
+    // Phase 2c: Apply merges + re-embed (when autoMerge is on and not dry-run)
+    let reEmbedded = 0;
+    if (merges.length > 0 && !dryRun) {
+      const embedder = config.embedder;
+      if (!embedder) {
+        console.warn("[autodream] No embedder configured — merges will update text without re-embedding vectors");
+      }
+      for (const merge of merges) {
+        try {
+          let updated = false;
+          if (embedder) {
+            try {
+              const newVector = await embedder.embed(merge.mergedText);
+              updated = await adapter.updateMemoryTextAndVector(
+                merge.keepId,
+                merge.mergedText,
+                newVector,
+              );
+              if (updated) reEmbedded++;
+            } catch (embedErr) {
+              console.warn(
+                `[autodream] re-embed failed for ${merge.keepId}, keeping old vector: ${embedErr instanceof Error ? embedErr.message : String(embedErr)}`,
+              );
+              updated = await adapter.updateMemoryText(merge.keepId, merge.mergedText);
+            }
+          } else {
+            updated = await adapter.updateMemoryText(merge.keepId, merge.mergedText);
+          }
+          if (!updated) {
+            console.error(`[autodream] Failed to update merged memory ${merge.keepId}`);
+          }
+          // Delete originals
+          for (const delId of merge.originalsToDelete) {
+            await adapter.deleteMemory(delId);
+          }
+        } catch (err) {
+          console.error(
+            `[autodream] Merge apply error for ${merge.keepId}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       }
     }
 
@@ -332,6 +407,8 @@ export async function runDream(
       timeFixesApplied,
       promotions,
       reflection,
+      noiseDeleted,
+      reEmbedded,
     );
 
     const result: DreamRunResult = {

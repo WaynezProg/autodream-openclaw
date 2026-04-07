@@ -34,13 +34,16 @@ export interface RecallStatsOptions {
 // ── RecallTracker ──────────────────────────────────────
 
 const LOG_FILENAME = "recall-log.jsonl";
+const AUTO_RECALL_LOG_FILENAME = "auto-recall-log.jsonl";
 const DEFAULT_MAX_AGE_DAYS = 90;
 
 export class RecallTracker {
   private readonly logPath: string;
+  private readonly autoRecallLogPath: string;
 
   constructor(logDir: string) {
     this.logPath = path.join(logDir, LOG_FILENAME);
+    this.autoRecallLogPath = path.join(logDir, AUTO_RECALL_LOG_FILENAME);
   }
 
   /** Append a recall event to the JSONL log. */
@@ -107,26 +110,33 @@ export class RecallTracker {
     };
   }
 
-  /** Read all log entries, optionally filtered by time. */
+  /** Read all log entries from both manual and auto-recall logs, optionally filtered by time. */
   async readLog(since?: number): Promise<RecallLogEntry[]> {
-    let content: string;
-    try {
-      content = await fs.promises.readFile(this.logPath, "utf-8");
-    } catch {
-      return [];
-    }
-
     const entries: RecallLogEntry[] = [];
-    for (const line of content.split("\n")) {
-      if (!line.trim()) continue;
+
+    // Read from both log files
+    for (const filePath of [this.logPath, this.autoRecallLogPath]) {
+      let content: string;
       try {
-        const entry = JSON.parse(line) as RecallLogEntry;
-        if (since !== undefined && entry.ts < since) continue;
-        entries.push(entry);
+        content = await fs.promises.readFile(filePath, "utf-8");
       } catch {
-        // skip malformed lines
+        continue; // file doesn't exist yet — that's fine
+      }
+
+      for (const line of content.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          const entry = JSON.parse(line) as RecallLogEntry;
+          if (since !== undefined && entry.ts < since) continue;
+          entries.push(entry);
+        } catch {
+          // skip malformed lines
+        }
       }
     }
+
+    // Merge: sort by timestamp ascending
+    entries.sort((a, b) => a.ts - b.ts);
     return entries;
   }
 
@@ -192,25 +202,45 @@ export class RecallTracker {
     return results;
   }
 
-  /** Delete entries older than maxAgeDays. Returns number of entries pruned. */
+  /** Delete entries older than maxAgeDays from both log files. Returns total entries pruned. */
   async prune(maxAgeDays: number = DEFAULT_MAX_AGE_DAYS): Promise<number> {
     const cutoff = Date.now() - maxAgeDays * 86_400_000;
-    const allEntries = await this.readLog();
-    const kept = allEntries.filter((e) => e.ts >= cutoff);
-    const pruned = allEntries.length - kept.length;
+    let totalPruned = 0;
 
-    if (pruned === 0) return 0;
+    for (const filePath of [this.logPath, this.autoRecallLogPath]) {
+      let content: string;
+      try {
+        content = await fs.promises.readFile(filePath, "utf-8");
+      } catch {
+        continue; // file doesn't exist
+      }
 
-    const dir = path.dirname(this.logPath);
-    await fs.promises.mkdir(dir, { recursive: true });
+      const allEntries: RecallLogEntry[] = [];
+      for (const line of content.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          allEntries.push(JSON.parse(line) as RecallLogEntry);
+        } catch {
+          // skip malformed
+        }
+      }
 
-    if (kept.length === 0) {
-      await fs.promises.writeFile(this.logPath, "", "utf-8");
-    } else {
-      const content = kept.map((e) => JSON.stringify(e)).join("\n") + "\n";
-      await fs.promises.writeFile(this.logPath, content, "utf-8");
+      const kept = allEntries.filter((e) => e.ts >= cutoff);
+      const pruned = allEntries.length - kept.length;
+      if (pruned === 0) continue;
+
+      totalPruned += pruned;
+      const dir = path.dirname(filePath);
+      await fs.promises.mkdir(dir, { recursive: true });
+
+      if (kept.length === 0) {
+        await fs.promises.writeFile(filePath, "", "utf-8");
+      } else {
+        const newContent = kept.map((e) => JSON.stringify(e)).join("\n") + "\n";
+        await fs.promises.writeFile(filePath, newContent, "utf-8");
+      }
     }
 
-    return pruned;
+    return totalPruned;
   }
 }

@@ -70,7 +70,10 @@ const DEFAULT_CONFIG: DreamServiceConfig = {
   recallMaxAgeDays: 90,
 };
 
-export function createDreamService(api: OpenClawPluginApi): OpenClawPluginService {
+export function createDreamService(
+  api: OpenClawPluginApi,
+  embedder?: { embed(text: string): Promise<number[]> },
+): OpenClawPluginService {
   const config: DreamServiceConfig = { ...DEFAULT_CONFIG, ...api.pluginConfig };
   const logger = api.logger;
 
@@ -176,6 +179,7 @@ export function createDreamService(api: OpenClawPluginApi): OpenClawPluginServic
       llmBaseUrl: pluginConfig["llmBaseUrl"] as string | undefined,
       llmApiKey: pluginConfig["llmApiKey"] as string | undefined,
       subagentRuntime,
+      embedder,
 
       // Deep Promotion
       deepEnabled: config.deepEnabled,

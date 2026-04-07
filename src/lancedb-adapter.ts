@@ -174,6 +174,63 @@ export class LanceDbAdapter {
     }
   }
 
+  /**
+   * Update text and vector of a memory record.
+   * Used after merge to re-embed with the new text.
+   */
+  async updateMemoryTextAndVector(
+    id: string,
+    newText: string,
+    newVector: number[],
+  ): Promise<boolean> {
+    const db = this.ensureConnected();
+    try {
+      const table = await db.openTable(this.tableName);
+      const schema = await table.schema();
+      const columnNames = new Set(schema.fields.map((f) => f.name));
+      const vectorCol = columnNames.has("vector")
+        ? "vector"
+        : columnNames.has("embedding")
+          ? "embedding"
+          : null;
+
+      const escapedId = id.replace(/'/g, "''");
+      if (vectorCol) {
+        await table.update({
+          where: `id = '${escapedId}'`,
+          values: { text: newText, [vectorCol]: newVector } as Record<string, string>,
+        });
+      } else {
+        await table.update({
+          where: `id = '${escapedId}'`,
+          values: { text: newText } as Record<string, string>,
+        });
+      }
+      return true;
+    } catch (err) {
+      console.error(
+        `[lancedb-adapter] updateMemoryTextAndVector error for ${id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return false;
+    }
+  }
+
+  /** Delete a memory by ID. Returns true if successful. */
+  async deleteMemory(id: string): Promise<boolean> {
+    const db = this.ensureConnected();
+    try {
+      const table = await db.openTable(this.tableName);
+      const escapedId = id.replace(/'/g, "''");
+      await table.delete(`id = '${escapedId}'`);
+      return true;
+    } catch (err) {
+      console.error(
+        `[lancedb-adapter] deleteMemory error for ${id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return false;
+    }
+  }
+
   async countMemories(scope?: string): Promise<number> {
     const db = this.ensureConnected();
     try {

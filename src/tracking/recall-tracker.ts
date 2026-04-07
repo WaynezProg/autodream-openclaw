@@ -6,6 +6,7 @@ import * as path from "node:path";
 export interface RecallHit {
   id: string;
   score: number;
+  scope?: string;
 }
 
 export interface RecallLogEntry {
@@ -27,6 +28,7 @@ export interface RecallStats {
 export interface RecallStatsOptions {
   since?: number;
   minRecalls?: number;
+  filterScopes?: string[];
 }
 
 // ── RecallTracker ──────────────────────────────────────
@@ -59,13 +61,14 @@ export class RecallTracker {
     agentId?: string,
   ): RecallLogEntry | null {
     const payload = toolResult.result as
-      | { memories?: Array<{ id: string; score?: number }> }
+      | { memories?: Array<{ id: string; score?: number; scope?: string }> }
       | undefined;
     if (!payload?.memories?.length) return null;
 
     const hits: RecallHit[] = payload.memories.map((m) => ({
       id: m.id,
       score: m.score ?? 0,
+      scope: m.scope,
     }));
 
     return { ts: Date.now(), query, agentId, hits };
@@ -80,7 +83,7 @@ export class RecallTracker {
   ): RecallLogEntry | null {
     if (msg.toolName !== "memory_recall") return null;
 
-    let parsed: { query?: string; memories?: Array<{ id: string; score?: number }> };
+    let parsed: { query?: string; memories?: Array<{ id: string; score?: number; scope?: string }> };
     try {
       parsed =
         typeof msg.content === "string" ? JSON.parse(msg.content) : (msg.content as typeof parsed);
@@ -93,6 +96,7 @@ export class RecallTracker {
     const hits: RecallHit[] = parsed.memories.map((m) => ({
       id: m.id,
       score: m.score ?? 0,
+      scope: m.scope,
     }));
 
     return {
@@ -143,8 +147,13 @@ export class RecallTracker {
       }
     >();
 
+    const filterScopes = options?.filterScopes;
+
     for (const entry of entries) {
       for (const hit of entry.hits) {
+        if (filterScopes && hit.scope && !filterScopes.includes(hit.scope)) {
+          continue;
+        }
         let acc = map.get(hit.id);
         if (!acc) {
           acc = {

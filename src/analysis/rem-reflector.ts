@@ -5,13 +5,24 @@ import type { RecallLogEntry } from "../tracking/recall-tracker.js";
 import type { LlmHelper } from "./llm-helper.js";
 import { extractKeywords } from "./dedup-detector.js";
 
-// NOTE: Spec requires filtering recall logs to only global+business scope.
-// v1 limitation: RecallLogEntry does not store per-hit scope, so we cannot
-// filter here. The Deep Promoter has its own scope gate (PROMOTABLE_SCOPES)
-// which prevents agent-specific memories from reaching shared MEMORY.md.
-// For DREAMS.md, this is a cosmetic concern — themes may include queries
-// from agent-specific contexts. This will be addressed when RecallHit gains
-// an optional `scope` field.
+// ── Scope filtering ──────────────────────────────────
+
+const REFLECTABLE_SCOPES = ["global", "business"];
+
+/**
+ * Filter recall entries to only include hits with reflectable scopes.
+ * Hits without a scope (legacy data) are kept for backward compatibility.
+ */
+export function filterEntriesByScope(entries: RecallLogEntry[]): RecallLogEntry[] {
+  return entries
+    .map((entry) => ({
+      ...entry,
+      hits: entry.hits.filter(
+        (h) => !h.scope || REFLECTABLE_SCOPES.includes(h.scope),
+      ),
+    }))
+    .filter((entry) => entry.hits.length > 0);
+}
 
 // ── Types ──────────────────────────────────────────────
 
@@ -339,22 +350,28 @@ export async function runRemReflection(opts: {
     path.join(os.homedir(), ".openclaw", "workspace");
   const dreamsMdPath = path.join(workspacePath, "DREAMS.md");
 
-  // Gate: minimum recall count
-  if (opts.currentWeekEntries.length < config.minWeeklyRecalls) {
+  // Filter entries to only reflectable scopes (global + business)
+  const currentEntries = filterEntriesByScope(opts.currentWeekEntries);
+
+  // Gate: minimum recall count (checked after scope filtering)
+  if (currentEntries.length < config.minWeeklyRecalls) {
     return null;
   }
 
   const period = getIsoWeek(now);
 
   // Cluster queries into themes
-  const currentGroups = clusterQueriesByKeywords(opts.currentWeekEntries);
-  const currentThemes = groupsToThemes(currentGroups, opts.currentWeekEntries.length);
+  const currentGroups = clusterQueriesByKeywords(currentEntries);
+  const currentThemes = groupsToThemes(currentGroups, currentEntries.length);
 
   // Previous week themes (for emerging/fading)
   let previousThemes: ThemeEntry[] = [];
-  if (opts.previousWeekEntries && opts.previousWeekEntries.length > 0) {
-    const prevGroups = clusterQueriesByKeywords(opts.previousWeekEntries);
-    previousThemes = groupsToThemes(prevGroups, opts.previousWeekEntries.length);
+  const prevEntries = opts.previousWeekEntries
+    ? filterEntriesByScope(opts.previousWeekEntries)
+    : [];
+  if (prevEntries.length > 0) {
+    const prevGroups = clusterQueriesByKeywords(prevEntries);
+    previousThemes = groupsToThemes(prevGroups, prevEntries.length);
   }
 
   const { emerging, fading } = detectEmergingAndFading(currentThemes, previousThemes);

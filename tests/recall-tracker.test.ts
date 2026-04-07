@@ -179,6 +179,38 @@ describe("RecallTracker", () => {
       expect(stats[0].memoryId).toBe("high");
       expect(stats[1].memoryId).toBe("low");
     });
+
+    it("should filter by filterScopes", async () => {
+      await tracker.record(
+        makeEntry({ hits: [{ id: "m1", score: 0.8, scope: "global" }] }),
+      );
+      await tracker.record(
+        makeEntry({ hits: [{ id: "m2", score: 0.7, scope: "agent:kurisu" }] }),
+      );
+      await tracker.record(
+        makeEntry({ hits: [{ id: "m3", score: 0.6, scope: "business" }] }),
+      );
+
+      const stats = await tracker.getStats({ filterScopes: ["global", "business"] });
+      const ids = stats.map((s) => s.memoryId);
+      expect(ids).toContain("m1");
+      expect(ids).toContain("m3");
+      expect(ids).not.toContain("m2");
+    });
+
+    it("should include hits without scope when filterScopes is set (backward compat)", async () => {
+      await tracker.record(
+        makeEntry({ hits: [{ id: "m1", score: 0.8 }] }), // no scope
+      );
+      await tracker.record(
+        makeEntry({ hits: [{ id: "m2", score: 0.7, scope: "agent:kurisu" }] }),
+      );
+
+      const stats = await tracker.getStats({ filterScopes: ["global"] });
+      const ids = stats.map((s) => s.memoryId);
+      expect(ids).toContain("m1"); // no scope → included
+      expect(ids).not.toContain("m2");
+    });
   });
 
   describe("prune", () => {
@@ -231,7 +263,25 @@ describe("RecallTracker", () => {
       expect(entry!.query).toBe("search query");
       expect(entry!.agentId).toBe("agent-1");
       expect(entry!.hits).toHaveLength(2);
-      expect(entry!.hits[0]).toEqual({ id: "m1", score: 0.85 });
+      expect(entry!.hits[0]).toEqual({ id: "m1", score: 0.85, scope: undefined });
+    });
+
+    it("should propagate scope from tool result payload", () => {
+      const entry = tracker.recordFromToolResult(
+        {
+          result: {
+            memories: [
+              { id: "m1", score: 0.85, scope: "global" },
+              { id: "m2", score: 0.7, scope: "agent:kurisu" },
+            ],
+          },
+        },
+        "search query",
+      );
+
+      expect(entry).not.toBeNull();
+      expect(entry!.hits[0].scope).toBe("global");
+      expect(entry!.hits[1].scope).toBe("agent:kurisu");
     });
 
     it("should return null for empty memories", () => {
@@ -258,6 +308,23 @@ describe("RecallTracker", () => {
       expect(entry).not.toBeNull();
       expect(entry!.query).toBe("find stuff");
       expect(entry!.hits).toHaveLength(1);
+    });
+
+    it("should propagate scope from message content", () => {
+      const entry = tracker.recordFromMessage({
+        toolName: "memory_recall",
+        content: {
+          query: "find stuff",
+          memories: [
+            { id: "m1", score: 0.9, scope: "business" },
+            { id: "m2", score: 0.8 },
+          ],
+        },
+      });
+
+      expect(entry).not.toBeNull();
+      expect(entry!.hits[0].scope).toBe("business");
+      expect(entry!.hits[1].scope).toBeUndefined();
     });
 
     it("should extract from message content string", () => {

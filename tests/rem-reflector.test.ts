@@ -7,6 +7,7 @@ import {
   getWeekRange,
   clusterQueriesByKeywords,
   detectEmergingAndFading,
+  filterEntriesByScope,
   formatReflectionSection,
   runRemReflection,
   isSunday,
@@ -179,6 +180,64 @@ describe("isSunday", () => {
   });
 });
 
+describe("filterEntriesByScope", () => {
+  it("should keep hits with global or business scope", () => {
+    const entries: RecallLogEntry[] = [
+      {
+        ts: Date.now(),
+        query: "test",
+        hits: [
+          { id: "m1", score: 0.8, scope: "global" },
+          { id: "m2", score: 0.7, scope: "business" },
+          { id: "m3", score: 0.6, scope: "agent:kurisu" },
+        ],
+      },
+    ];
+    const filtered = filterEntriesByScope(entries);
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0].hits).toHaveLength(2);
+    expect(filtered[0].hits.map((h) => h.id)).toEqual(["m1", "m2"]);
+  });
+
+  it("should keep hits without scope (backward compat)", () => {
+    const entries: RecallLogEntry[] = [
+      {
+        ts: Date.now(),
+        query: "test",
+        hits: [
+          { id: "m1", score: 0.8 }, // no scope
+          { id: "m2", score: 0.7, scope: "agent:frieren" },
+        ],
+      },
+    ];
+    const filtered = filterEntriesByScope(entries);
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0].hits).toHaveLength(1);
+    expect(filtered[0].hits[0].id).toBe("m1");
+  });
+
+  it("should drop entries where all hits are agent-specific", () => {
+    const entries: RecallLogEntry[] = [
+      {
+        ts: Date.now(),
+        query: "agent only",
+        hits: [
+          { id: "m1", score: 0.8, scope: "agent:kurisu" },
+          { id: "m2", score: 0.7, scope: "agent:frieren" },
+        ],
+      },
+      {
+        ts: Date.now(),
+        query: "global query",
+        hits: [{ id: "m3", score: 0.9, scope: "global" }],
+      },
+    ];
+    const filtered = filterEntriesByScope(entries);
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0].query).toBe("global query");
+  });
+});
+
 describe("runRemReflection", () => {
   let tmpDir: string;
 
@@ -276,5 +335,57 @@ describe("runRemReflection", () => {
       workspacePath: tmpDir,
     });
     expect(result).toBeNull();
+  });
+
+  it("should return null when entries fall below threshold after scope filtering", async () => {
+    // 15 entries but all agent-specific → filtered to 0
+    const entries: RecallLogEntry[] = [];
+    for (let i = 0; i < 15; i++) {
+      entries.push({
+        ts: Date.now(),
+        query: `agent query ${i % 3}`,
+        hits: [{ id: `m${i}`, score: 0.8, scope: "agent:kurisu" }],
+      });
+    }
+
+    const result = await runRemReflection({
+      currentWeekEntries: entries,
+      llm: null,
+      config: { minWeeklyRecalls: 10 },
+      workspacePath: tmpDir,
+    });
+    expect(result).toBeNull();
+  });
+
+  it("should exclude agent-specific hits from themes", async () => {
+    const entries: RecallLogEntry[] = [];
+    // 12 global entries
+    for (let i = 0; i < 12; i++) {
+      entries.push({
+        ts: Date.now(),
+        query: "global topic discussion",
+        hits: [{ id: "m1", score: 0.8, scope: "global" }],
+      });
+    }
+    // 8 agent-specific entries that should be filtered out
+    for (let i = 0; i < 8; i++) {
+      entries.push({
+        ts: Date.now(),
+        query: "secret agent work",
+        hits: [{ id: "m2", score: 0.9, scope: "agent:kurisu" }],
+      });
+    }
+
+    const result = await runRemReflection({
+      currentWeekEntries: entries,
+      llm: null,
+      config: { minWeeklyRecalls: 10 },
+      workspacePath: tmpDir,
+    });
+
+    expect(result).not.toBeNull();
+    // Themes should not contain the agent-specific query
+    const themeNames = result!.themes.map((t) => t.theme.toLowerCase());
+    expect(themeNames.some((t) => t.includes("secret agent"))).toBe(false);
   });
 });

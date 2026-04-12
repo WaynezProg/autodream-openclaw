@@ -336,6 +336,51 @@ export function formatReportMarkdown(report: DreamReport): string {
   return lines.join("\n");
 }
 
+/**
+ * Format a compact report listing only items with actual changes.
+ * Used for notifications and daily notes.
+ */
+export function formatCompactReport(report: DreamReport): string | null {
+  const lines: string[] = [];
+
+  if (report.merges && report.merges.count > 0) {
+    lines.push(`- Duplicates merged: ${report.merges.count}`);
+  } else if (report.duplicates.count > 0) {
+    lines.push(`- Duplicates found: ${report.duplicates.count}`);
+  }
+
+  if (report.timeFixesApplied && report.timeFixesApplied > 0) {
+    lines.push(`- Time expressions fixed: ${report.timeFixesApplied}`);
+  }
+
+  if (report.noiseDeleted && report.noiseDeleted > 0) {
+    lines.push(`- Noise deleted: ${report.noiseDeleted}`);
+  }
+
+  if (report.conflicts.count > 0) {
+    lines.push(`- Conflicts detected: ${report.conflicts.count}`);
+  }
+
+  if (report.promotions && report.promotions.count > 0) {
+    lines.push(`- Deep promotions: ${report.promotions.count}`);
+  }
+
+  if (report.reEmbedded && report.reEmbedded > 0) {
+    lines.push(`- Re-embedded: ${report.reEmbedded}`);
+  }
+
+  if (report.reflection) {
+    lines.push(`- REM reflection: ${report.reflection.themes.length} themes`);
+  }
+
+  if (lines.length === 0) {
+    return null;
+  }
+
+  const header = `🧠 autoDream Report (${report.scanned} scanned${report.dryRun ? ", dry-run" : ""})`;
+  return `${header}\n${lines.join("\n")}`;
+}
+
 function truncate(s: string, max: number): string {
   return s.length <= max ? s : s.slice(0, max - 3) + "...";
 }

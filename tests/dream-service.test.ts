@@ -1,9 +1,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createDreamService, _testing } from "../src/dream-service.js";
+import { createDreamService, createDreamServiceWithInternals, _testing } from "../src/dream-service.js";
 import type {
   OpenClawPluginApi,
   OpenClawPluginServiceContext,
 } from "openclaw/plugin-sdk/plugin-entry";
+
+const mockRunDream = vi.fn();
+const mockWritePersistedDreamStatus = vi.fn();
+
+vi.mock("../src/dream-engine.js", () => ({
+  runDream: (...args: unknown[]) => mockRunDream(...args),
+}));
+
+vi.mock("../src/run-status.js", () => ({
+  writePersistedDreamStatus: (...args: unknown[]) => mockWritePersistedDreamStatus(...args),
+}));
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -53,6 +64,19 @@ function createMockCtx(): OpenClawPluginServiceContext {
 describe("createDreamService", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    mockRunDream.mockReset();
+    mockWritePersistedDreamStatus.mockReset();
+    mockRunDream.mockResolvedValue({
+      report: {
+        timestamp: "2026-04-05T03:00:00.000Z",
+        scanned: 10,
+        duplicates: { count: 0, pairs: [] },
+        conflicts: { count: 0, pairs: [] },
+        stale: { count: 0, entries: [] },
+        timeIssues: { count: 0, entries: [] },
+        dryRun: true,
+      },
+    });
   });
 
   afterEach(() => {
@@ -167,6 +191,56 @@ describe("createDreamService", () => {
       const ctx = createMockCtx();
 
       expect(() => service.stop?.(ctx)).not.toThrow();
+    });
+  });
+
+  describe("scheduled execution", () => {
+    it("writes persisted status after a scheduled run", async () => {
+      const { api, agentEndHandlers } = createMockApi({
+        minSessionsSinceLastRun: 1,
+      });
+      const { internals } = createDreamServiceWithInternals(api);
+
+      await agentEndHandlers[0]!();
+      await internals.executeDream();
+
+      expect(mockRunDream).toHaveBeenCalledTimes(1);
+      expect(mockWritePersistedDreamStatus).toHaveBeenCalledTimes(1);
+      expect(mockWritePersistedDreamStatus).toHaveBeenCalledWith(
+        expect.any(Object),
+        "scheduled",
+      );
+    });
+
+    it("treats scheduled runs as dry-run when no write actions are enabled", async () => {
+      const { api, agentEndHandlers } = createMockApi({
+        minSessionsSinceLastRun: 1,
+        deepEnabled: true,
+        autoMergeDuplicates: false,
+        autoFixTime: false,
+        autoDeleteStale: false,
+      });
+      const { internals } = createDreamServiceWithInternals(api);
+
+      await agentEndHandlers[0]!();
+      await internals.executeDream();
+
+      expect(mockRunDream).toHaveBeenCalledTimes(1);
+      expect(mockRunDream).toHaveBeenCalledWith(
+        expect.objectContaining({
+          dryRun: true,
+        }),
+      );
+    });
+  });
+
+  describe("internals", () => {
+    it("computes the next run using local time when today's schedule has passed", () => {
+      const { api } = createMockApi({ scheduleHour: 3 });
+      const { internals } = createDreamServiceWithInternals(api);
+
+      const next = internals.computeNextRunTime(new Date("2026-04-05T04:00:00.000Z"));
+      expect(next.toISOString()).toBe("2026-04-05T19:00:00.000Z");
     });
   });
 

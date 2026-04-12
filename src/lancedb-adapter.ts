@@ -55,6 +55,20 @@ export interface LanceDbAdapterOptions {
   scanLimit?: number;
 }
 
+const DEFAULT_OPERATION_TIMEOUT_MS = 15_000;
+
+async function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = DEFAULT_OPERATION_TIMEOUT_MS): Promise<T> {
+  return await Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      void timer;
+    }),
+  ]);
+}
+
 export class LanceDbAdapter {
   private readonly dbPath: string;
   private readonly tableName: string;
@@ -68,7 +82,10 @@ export class LanceDbAdapter {
   }
 
   async connect(): Promise<void> {
-    this.db = await lancedb.connect(this.dbPath);
+    this.db = await withTimeout(
+      lancedb.connect(this.dbPath),
+      `LanceDB connect (${this.dbPath})`,
+    );
   }
 
   async close(): Promise<void> {
@@ -105,7 +122,10 @@ export class LanceDbAdapter {
 
     let table: lancedb.Table;
     try {
-      table = await db.openTable(this.tableName);
+      table = await withTimeout(
+        db.openTable(this.tableName),
+        `LanceDB openTable(${this.tableName})`,
+      );
     } catch {
       return [];
     }
@@ -228,6 +248,94 @@ export class LanceDbAdapter {
         `[lancedb-adapter] deleteMemory error for ${id}: ${err instanceof Error ? err.message : String(err)}`,
       );
       return false;
+    }
+  }
+
+  /**
+   * Store a new memory record in LanceDB.
+   * Returns true if successful.
+   */
+  async store(record: {
+    id: string;
+    text: string;
+    category: string;
+    scope: string;
+    importance: number;
+    timestamp: number;
+    metadata: string;
+    vector: number[];
+  }): Promise<boolean> {
+    const db = this.ensureConnected();
+    try {
+      const table = await withTimeout(
+        db.openTable(this.tableName),
+        `LanceDB openTable(${this.tableName})`,
+      );
+      await withTimeout(
+        table.add([record]),
+        `LanceDB add(${this.tableName})`,
+      );
+      return true;
+    } catch (err) {
+      console.error(
+        `[lancedb-adapter] store error: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Vector similarity search. Returns matching records above the given threshold.
+   * @param vector - query vector
+   * @param limit - max results to return
+   * @param minScore - minimum similarity score (0-1). Records below this are filtered out.
+   */
+  async search(
+    vector: number[],
+    limit: number,
+    minScore?: number,
+  ): Promise<Array<MemoryRecord & { _distance: number }>> {
+    const db = this.ensureConnected();
+    try {
+      const table = await withTimeout(
+        db.openTable(this.tableName),
+        `LanceDB openTable(${this.tableName})`,
+      );
+      const results = await withTimeout(
+        table
+          .search(vector)
+          .limit(limit)
+          .toArray(),
+        `LanceDB search(${this.tableName})`,
+      );
+
+      const mapped = (results as Record<string, unknown>[]).map((row) => ({
+        id: String(row["id"] ?? ""),
+        text: String(row["text"] ?? ""),
+        category: String(row["category"] ?? "other"),
+        scope: String(row["scope"] ?? ""),
+        importance: Number(row["importance"] ?? 0),
+        timestamp: Number(row["timestamp"] ?? 0),
+        metadata: String(row["metadata"] ?? "{}"),
+        vector: toNumberArray(row["vector"] ?? row["embedding"]),
+        _distance: Number(row["_distance"] ?? 1),
+      }));
+
+      if (minScore !== undefined) {
+        // LanceDB returns L2 distance; convert to cosine similarity approximation
+        // For normalized vectors: similarity ≈ 1 - distance/2
+        return mapped.filter((r) => {
+          const similarity = 1 - r._distance / 2;
+          return similarity >= minScore;
+        });
+      }
+
+      return mapped;
+    } catch (err) {
+      console.error(
+        `[lancedb-adapter] search error: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return [];
     }
   }
 

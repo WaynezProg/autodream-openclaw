@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { Type } from "@sinclair/typebox";
 import { getLastRunResult } from "../dream-engine.js";
 import { LanceDbAdapter } from "../lancedb-adapter.js";
+import { readPersistedDreamStatus } from "../run-status.js";
 import { RecallTracker } from "../tracking/recall-tracker.js";
 import type {
   OpenClawPluginToolContext,
@@ -12,12 +13,11 @@ import type {
 
 const parameters = Type.Object({});
 
-// ── Helpers for reading last promotion / reflection ────
-
 interface LastPromotionInfo {
   date: string;
   count: number;
   entries: string[];
+  source: "status" | "workspace";
 }
 
 function parseLastPromotion(memoryMdPath: string): LastPromotionInfo | null {
@@ -36,7 +36,6 @@ function parseLastPromotion(memoryMdPath: string): LastPromotionInfo | null {
   const memoryIds: string[] = [];
   let latestDate = "";
 
-  // Extract memory IDs and dates from entries
   const idRegex = /來源 memory ID: `([^`]+)`/g;
   const dateRegex = /\*\*\w+\*\*（(\d{4}-\d{2}-\d{2})）/g;
 
@@ -54,12 +53,14 @@ function parseLastPromotion(memoryMdPath: string): LastPromotionInfo | null {
     date: latestDate || new Date().toISOString().slice(0, 10),
     count: memoryIds.length,
     entries: memoryIds,
+    source: "workspace",
   };
 }
 
 interface LastReflectionInfo {
   period: string;
   themes: string[];
+  source: "status" | "workspace";
 }
 
 function parseLastReflection(dreamsMdPath: string): LastReflectionInfo | null {
@@ -70,7 +71,6 @@ function parseLastReflection(dreamsMdPath: string): LastReflectionInfo | null {
     return null;
   }
 
-  // Find the first (most recent) REM section
   const remMatch = content.match(/## REM — Week (\d+) \(([^)]+)\)/);
   if (!remMatch) return null;
 
@@ -81,11 +81,9 @@ function parseLastReflection(dreamsMdPath: string): LastReflectionInfo | null {
     ? content.slice(sectionStart, nextSection)
     : content.slice(sectionStart);
 
-  // Extract themes
   const themeMatch = section.match(/\*\*主題：\*\*\s*(.+)/);
   const themes: string[] = [];
   if (themeMatch) {
-    // Parse "theme1 (N次), theme2 (N次)" format
     const parts = themeMatch[1].split(",").map((s) => s.trim());
     for (const p of parts) {
       const name = p.replace(/\s*\(\d+次\)\s*$/, "").trim();
@@ -93,15 +91,12 @@ function parseLastReflection(dreamsMdPath: string): LastReflectionInfo | null {
     }
   }
 
-  // Determine period from week number and year
   const yearMatch = content.match(/(\d{4})/);
   const year = yearMatch ? yearMatch[1] : new Date().getFullYear().toString();
   const period = `${year}-W${weekNum.padStart(2, "0")}`;
 
-  return { period, themes };
+  return { period, themes, source: "workspace" };
 }
-
-// ── Tool factory ───────────────────────────────────────
 
 export function createDreamStatusTool(
   recallLogDir?: string,
@@ -118,7 +113,8 @@ export function createDreamStatusTool(
         _toolCallId: string,
         _params: Record<string, never>,
       ) => {
-        const lastRun = getLastRunResult();
+        const sessionLastRun = getLastRunResult();
+        const persisted = await readPersistedDreamStatus();
 
         const adapter = new LanceDbAdapter();
         let memoryCount = 0;
@@ -132,15 +128,12 @@ export function createDreamStatusTool(
           try {
             schemaColumns = await adapter.getTableSchema();
           } catch {
-            // schema 讀取失敗不影響 status
           }
         } catch {
-          // LanceDB 不可用
         } finally {
           await adapter.close();
         }
 
-        // Recall Tracker stats
         const logDir =
           recallLogDir ??
           path.join(os.homedir(), ".openclaw", "memory", "autodream-reports");
@@ -155,16 +148,32 @@ export function createDreamStatusTool(
           ? new Date(Math.min(...allEntries.map((e) => e.ts))).toISOString()
           : "N/A";
 
-        // Last Promotion
         const wsPath =
           workspacePath ??
           path.join(os.homedir(), ".openclaw", "workspace");
-        const lastPromotion = parseLastPromotion(path.join(wsPath, "MEMORY.md"));
+        const workspacePromotion = parseLastPromotion(path.join(wsPath, "MEMORY.md"));
+        const workspaceReflection = parseLastReflection(path.join(wsPath, "DREAMS.md"));
 
-        // Last Reflection
-        const lastReflection = parseLastReflection(path.join(wsPath, "DREAMS.md"));
+        const lastPromotion = persisted.lastDeepPromotion
+          ? persisted.lastDeepPromotion
+          : workspacePromotion;
+        const lastReflection = persisted.lastRemReflection
+          ? persisted.lastRemReflection
+          : workspaceReflection;
 
-        // Build output
+        const currentRun = sessionLastRun?.report
+          ? {
+              timestamp: sessionLastRun.report.timestamp,
+              scanned: sessionLastRun.report.scanned,
+              duplicates: sessionLastRun.report.duplicates.count,
+              dryRun: sessionLastRun.report.dryRun,
+              warning: sessionLastRun.error,
+              trigger: "manual" as const,
+              promotions: sessionLastRun.report.promotions?.count ?? 0,
+              reflection: Boolean(sessionLastRun.report.reflection),
+            }
+          : persisted.lastRun;
+
         const lines: string[] = [
           `# autoDream Status`,
           ``,
@@ -173,24 +182,22 @@ export function createDreamStatusTool(
           `- **Total memories:** ${memoryCount}`,
           `- **Schema columns:** ${schemaColumns.length > 0 ? schemaColumns.join(", ") : "N/A"}`,
           ``,
+          `## Last Run`,
         ];
 
-        if (lastRun) {
-          lines.push(`## Last Run`);
-          lines.push(`- **Time:** ${lastRun.report.timestamp}`);
-          lines.push(`- **Scanned:** ${lastRun.report.scanned}`);
-          lines.push(
-            `- **Duplicates found:** ${lastRun.report.duplicates.count}`,
-          );
-          lines.push(
-            `- **Dry-run:** ${lastRun.report.dryRun ? "Yes" : "No"}`,
-          );
-          if (lastRun.error) {
-            lines.push(`- **Warning:** ${lastRun.error}`);
+        if (currentRun) {
+          lines.push(`- **Time:** ${currentRun.timestamp}`);
+          lines.push(`- **Trigger:** ${currentRun.trigger}`);
+          lines.push(`- **Scanned:** ${currentRun.scanned}`);
+          lines.push(`- **Duplicates found:** ${currentRun.duplicates}`);
+          lines.push(`- **Dry-run:** ${currentRun.dryRun ? "Yes" : "No"}`);
+          lines.push(`- **Deep Promotions:** ${currentRun.promotions}`);
+          lines.push(`- **REM Reflection:** ${currentRun.reflection ? "Yes" : "No"}`);
+          if (currentRun.warning) {
+            lines.push(`- **Warning:** ${currentRun.warning}`);
           }
         } else {
-          lines.push(`## Last Run`);
-          lines.push(`No previous run recorded in this session.`);
+          lines.push(`No previous run recorded.`);
         }
 
         lines.push(``);
@@ -211,6 +218,7 @@ export function createDreamStatusTool(
         if (lastPromotion) {
           lines.push(`- **Date:** ${lastPromotion.date}`);
           lines.push(`- **Count:** ${lastPromotion.count}`);
+          lines.push(`- **Source:** ${lastPromotion.source}`);
           lines.push(`- **Entries:** ${lastPromotion.entries.map((id) => `\`${id}\``).join(", ")}`);
         } else {
           lines.push(`No promotions recorded.`);
@@ -220,6 +228,7 @@ export function createDreamStatusTool(
         lines.push(`## Last REM Reflection`);
         if (lastReflection) {
           lines.push(`- **Period:** ${lastReflection.period}`);
+          lines.push(`- **Source:** ${lastReflection.source}`);
           lines.push(`- **Themes:** ${lastReflection.themes.join(", ") || "(none)"}`);
         } else {
           lines.push(`No reflections recorded.`);
@@ -241,7 +250,7 @@ export function createDreamStatusTool(
           details: {
             memoryCount,
             tables,
-            lastRun: lastRun?.report ?? null,
+            lastRun: currentRun,
             recallTracker: {
               totalEntries: allEntries.length,
               oldestEntry,
@@ -249,6 +258,7 @@ export function createDreamStatusTool(
             },
             lastPromotion,
             lastReflection,
+            persistedStatusUpdatedAt: persisted.updatedAt || null,
           },
         };
       },

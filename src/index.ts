@@ -66,23 +66,19 @@ export default definePluginEntry({
     // 註冊 agent_end hook（logging + recall tracking）
     const logger = api.logger;
 
-    // 嘗試 tool_result event（優先）— SDK 型別尚未宣告，用 as any 繞過
-    try {
-      (api as any).on("tool_result", async (event: any, ctx: any) => {
-        if (event.toolName !== "memory_recall") return;
-        const entry = recallTracker.recordFromToolResult(
-          event,
-          event.args?.query ?? "",
-          ctx?.agentId,
-        );
-        if (entry) {
-          await recallTracker.record(entry);
-          logger.debug?.(`[autodream] recall tracked: ${entry.hits.length} hits`);
-        }
-      });
-    } catch {
-      // tool_result event not supported, fall through to agent_end fallback
-    }
+    // 使用 after_tool_call hook 追蹤 memory_recall（2026.4.10 正式 hook 名稱）
+    api.on("after_tool_call", async (event: any, ctx: any) => {
+      if (event.toolName !== "memory_recall") return;
+      const entry = recallTracker.recordFromToolResult(
+        event,
+        event.args?.query ?? "",
+        ctx?.agentId,
+      );
+      if (entry) {
+        await recallTracker.record(entry);
+        logger.debug?.(`[autodream] recall tracked: ${entry.hits.length} hits`);
+      }
+    });
 
     // agent_end hook（logging + recall tracking fallback）
     api.on("agent_end", async (event, ctx) => {

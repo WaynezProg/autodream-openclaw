@@ -1,6 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { runDream } from "../dream-engine.js";
 import { formatReportMarkdown } from "../report/reporter.js";
+import { writePersistedDreamStatus } from "../run-status.js";
 import type {
   OpenClawPluginToolContext,
   AnyAgentTool,
@@ -126,6 +127,8 @@ export function createDreamNowTool(
           remMinWeeklyRecalls,
           ...(recallLogDir ? { recallLogDir } : {}),
         });
+
+        await writePersistedDreamStatus(result, "manual");
 
         const markdown = formatReportMarkdown(result.report);
         const llmInfo = result.llmCallsUsed

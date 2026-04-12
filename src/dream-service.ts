@@ -5,7 +5,8 @@ import type {
 } from "openclaw/plugin-sdk/plugin-entry";
 import { runDream } from "./dream-engine.js";
 import type { SubagentRuntime } from "./analysis/llm-helper.js";
-import { formatReportMarkdown, type DreamReport } from "./report/reporter.js";
+import { formatReportMarkdown, formatCompactReport, type DreamReport } from "./report/reporter.js";
+import { writePersistedDreamStatus } from "./run-status.js";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -70,10 +71,25 @@ const DEFAULT_CONFIG: DreamServiceConfig = {
   recallMaxAgeDays: 90,
 };
 
+export interface DreamServiceInternals {
+  computeNextRunTime(now: Date): Date;
+  scheduleNextRun(): void;
+  executeDream(): Promise<void>;
+  getSessionCount(): number;
+}
+
 export function createDreamService(
   api: OpenClawPluginApi,
   embedder?: { embed(text: string): Promise<number[]> },
 ): OpenClawPluginService {
+  const { service } = createDreamServiceWithInternals(api, embedder);
+  return service;
+}
+
+export function createDreamServiceWithInternals(
+  api: OpenClawPluginApi,
+  embedder?: { embed(text: string): Promise<number[]> },
+): { service: OpenClawPluginService; internals: DreamServiceInternals } {
   const config: DreamServiceConfig = { ...DEFAULT_CONFIG, ...api.pluginConfig };
   const logger = api.logger;
 
@@ -85,7 +101,14 @@ export function createDreamService(
     sessionCount++;
   });
 
-  return {
+  const internals: DreamServiceInternals = {
+    computeNextRunTime,
+    scheduleNextRun,
+    executeDream,
+    getSessionCount: () => sessionCount,
+  };
+
+  const service: OpenClawPluginService = {
     id: "autodream-scheduler",
 
     async start(_ctx: OpenClawPluginServiceContext) {
@@ -101,6 +124,8 @@ export function createDreamService(
       logger.info?.("[autodream] Background service stopped");
     },
   };
+
+  return { service, internals };
 
   function computeNextRunTime(now: Date): Date {
     const target = new Date(now);
@@ -164,8 +189,7 @@ export function createDreamService(
       dryRun:
         !config.autoMergeDuplicates &&
         !config.autoFixTime &&
-        !config.autoDeleteStale &&
-        !config.deepEnabled,
+        !config.autoDeleteStale,
       autoMergeDuplicates: config.autoMergeDuplicates,
       autoFixTime: config.autoFixTime,
       staleAgeDays: config.staleAgeDays,
@@ -195,6 +219,15 @@ export function createDreamService(
     });
 
     await writeReport(result.report);
+    await writePersistedDreamStatus(result, "scheduled");
+
+    // Notification & daily notes
+    const compact = formatCompactReport(result.report);
+    const summary = compact ?? `✅ autoDream 跑完了，掃描 ${result.report.scanned} 條記憶，沒有需要處理的變動。`;
+    await writeDailyNotes(summary, allowedScopes);
+    if (config.notifyTarget) {
+      await sendNotification(config.notifyTarget, summary);
+    }
 
     sessionCount = 0;
 
@@ -220,6 +253,78 @@ export function createDreamService(
     await fs.promises.writeFile(filepath, markdown, "utf-8");
 
     logger.debug?.(`[autodream] Report written to ${filepath}`);
+  }
+
+  async function writeDailyNotes(compact: string, scopes: string[]) {
+    const today = new Date().toISOString().slice(0, 10);
+    const timestamp = new Date().toISOString().slice(11, 16); // HH:MM
+
+    for (const scope of scopes) {
+      const notesDir = path.join(
+        os.homedir(),
+        ".openclaw",
+        "workspace",
+        "agents",
+        scope,
+        "memory",
+      );
+      const notesPath = path.join(notesDir, `${today}.md`);
+
+      try {
+        await fs.promises.mkdir(notesDir, { recursive: true });
+
+        const entry = `\n## autoDream ${timestamp}\n\n${compact}\n`;
+        await fs.promises.appendFile(notesPath, entry, "utf-8");
+
+        logger.debug?.(`[autodream] Daily notes written to ${notesPath}`);
+      } catch (err) {
+        logger.warn?.(
+          `[autodream] Failed to write daily notes for scope ${scope}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+  }
+
+  async function sendNotification(target: string, message: string) {
+    try {
+      const runtime = (api as unknown as { runtime?: {
+        system?: {
+          runCommandWithTimeout: (
+            cmd: string,
+            args: string[],
+            opts?: { timeoutMs?: number },
+          ) => Promise<{ stdout: string; stderr: string }>;
+        };
+      } }).runtime;
+
+      if (!runtime?.system?.runCommandWithTimeout) {
+        logger.warn?.("[autodream] runtime.system.runCommandWithTimeout not available, skipping notification");
+        return;
+      }
+
+      // Normalize target: bare Discord user IDs need user: prefix and --channel discord
+      const isDiscordUserId = /^\d{17,20}$/.test(target);
+      const normalizedTarget = isDiscordUserId ? `user:${target}` : target;
+      const args = ["message", "send"];
+      if (isDiscordUserId || target.startsWith("user:")) {
+        args.push("--channel", "discord");
+      }
+      args.push("--target", normalizedTarget, "--message", message);
+
+      await runtime.system.runCommandWithTimeout("openclaw", args, {
+        timeoutMs: 15_000,
+      });
+
+      logger.debug?.(`[autodream] Notification sent to ${target}`);
+    } catch (err) {
+      logger.warn?.(
+        `[autodream] Failed to send notification to ${target}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
   }
 }
 

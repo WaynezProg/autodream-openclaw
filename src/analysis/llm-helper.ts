@@ -251,7 +251,7 @@ export class LlmHelper {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    const apiKey = this.config.llmApiKey || process.env.OPENAI_API_KEY;
+    const apiKey = this.config.llmApiKey;
     if (apiKey) {
       headers["Authorization"] = `Bearer ${apiKey}`;
     }
@@ -296,7 +296,7 @@ export class LlmHelper {
       "Content-Type": "application/json",
       "anthropic-version": "2023-06-01",
     };
-    const apiKey = this.config.llmApiKey || process.env.ANTHROPIC_API_KEY;
+    const apiKey = this.config.llmApiKey;
     if (apiKey) {
       headers["x-api-key"] = apiKey;
     }

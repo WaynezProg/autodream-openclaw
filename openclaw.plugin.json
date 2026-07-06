@@ -4,6 +4,9 @@
   "description": "自動整理記憶：偵測重複、矛盾、過時條目，轉換相對時間",
   "version": "0.1.0",
   "main": "dist/index.js",
+  "contracts": {
+    "tools": ["dream_now", "dream_status"]
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

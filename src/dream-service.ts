@@ -6,7 +6,7 @@ import type {
 import { runDream } from "./dream-engine.js";
 import type { SubagentRuntime } from "./analysis/llm-helper.js";
 import { formatReportMarkdown, formatCompactReport, type DreamReport } from "./report/reporter.js";
-import { writePersistedDreamStatus } from "./run-status.js";
+import { writePersistedDreamStatus, readPersistedDreamStatus } from "./run-status.js";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -15,6 +15,9 @@ export interface DreamServiceConfig {
   intervalHours: number;
   scheduleHour: number;
   minSessionsSinceLastRun: number;
+  schedulePath?: string;
+  reportDir?: string;
+  dailyNotesRoot?: string;
   notifyTarget?: string;
   autoMergeDuplicates: boolean;
   autoFixTime: boolean;
@@ -71,6 +74,32 @@ const DEFAULT_CONFIG: DreamServiceConfig = {
   recallMaxAgeDays: 90,
 };
 
+// ---- Persisted schedule (survives restart + sleep) ----
+interface NextRunPersist {
+  nextRunIso: string;
+}
+
+function getDefaultSchedulePath(): string {
+  return path.join(os.homedir(), ".openclaw", "memory", "autodream-reports", "next-run.json");
+}
+
+async function readNextRun(schedulePath: string): Promise<string | null> {
+  try {
+    const raw = await fs.promises.readFile(schedulePath, "utf-8");
+    const parsed = JSON.parse(raw) as NextRunPersist;
+    return parsed.nextRunIso || null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeNextRun(schedulePath: string, nextRun: Date): Promise<void> {
+  const dir = path.dirname(schedulePath);
+  await fs.promises.mkdir(dir, { recursive: true });
+  const data: NextRunPersist = { nextRunIso: nextRun.toISOString() };
+  await fs.promises.writeFile(schedulePath, JSON.stringify(data), "utf-8");
+}
+
 export interface DreamServiceInternals {
   computeNextRunTime(now: Date): Date;
   scheduleNextRun(): void;
@@ -92,6 +121,7 @@ export function createDreamServiceWithInternals(
 ): { service: OpenClawPluginService; internals: DreamServiceInternals } {
   const config: DreamServiceConfig = { ...DEFAULT_CONFIG, ...api.pluginConfig };
   const logger = api.logger;
+  const schedulePath = config.schedulePath || getDefaultSchedulePath();
 
   let timerId: ReturnType<typeof setTimeout> | null = null;
   let sessionCount = 0;
@@ -113,7 +143,7 @@ export function createDreamServiceWithInternals(
 
     async start(_ctx: OpenClawPluginServiceContext) {
       logger.info?.("[autodream] Background service starting...");
-      scheduleNextRun();
+      await startWithCatchUp();
     },
 
     async stop(_ctx: OpenClawPluginServiceContext) {
@@ -126,6 +156,43 @@ export function createDreamServiceWithInternals(
   };
 
   return { service, internals };
+
+  async function startWithCatchUp() {
+    const now = new Date();
+    const persisted = await readNextRun(schedulePath);
+    const status = await readPersistedDreamStatus();
+    const lastRunMs = status.lastRun?.timestamp
+      ? new Date(status.lastRun.timestamp).getTime()
+      : 0;
+    const intervalMs = config.intervalHours * 60 * 60 * 1000;
+    const staleByLastRun = lastRunMs > 0 && now.getTime() - lastRunMs >= intervalMs;
+    const staleByPersisted =
+      persisted !== null && new Date(persisted).getTime() <= now.getTime();
+
+    if (staleByPersisted || staleByLastRun) {
+      const reason = staleByPersisted
+        ? `missed scheduled run (${persisted})`
+        : `lastRun ${status.lastRun?.timestamp} is older than ${config.intervalHours}h`;
+      if (sessionCount < config.minSessionsSinceLastRun) {
+        logger.debug?.(
+          `[autodream] Catch-up skipped: ${reason}, only ${sessionCount} sessions since last run (need ${config.minSessionsSinceLastRun})`,
+        );
+        scheduleNextRun();
+        return;
+      }
+
+      logger.info?.(`[autodream] Catch-up: ${reason}, running now...`);
+      try {
+        await executeDream();
+      } catch (err) {
+        logger.error?.(
+          `[autodream] Catch-up dream run failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
+    scheduleNextRun();
+  }
 
   function computeNextRunTime(now: Date): Date {
     const target = new Date(now);
@@ -144,7 +211,12 @@ export function createDreamServiceWithInternals(
     const target = computeNextRunTime(now);
     const delayMs = target.getTime() - now.getTime();
 
-    logger.debug?.(`[autodream] Next run scheduled at ${target.toISOString()}`);
+    // Persist the next run time (survives restart/sleep)
+    writeNextRun(schedulePath, target).catch((err) => {
+      logger.warn?.(`[autodream] Failed to persist schedule: ${err.message}`);
+    });
+
+    logger.info?.(`[autodream] Next run scheduled at ${target.toISOString()} (in ${Math.round(delayMs / 60000)} min)`);
 
     timerId = setTimeout(async () => {
       try {
@@ -238,7 +310,7 @@ export function createDreamServiceWithInternals(
   }
 
   async function writeReport(report: DreamReport) {
-    const reportDir = path.join(
+    const reportDir = config.reportDir || path.join(
       os.homedir(),
       ".openclaw",
       "memory",
@@ -258,16 +330,15 @@ export function createDreamServiceWithInternals(
   async function writeDailyNotes(compact: string, scopes: string[]) {
     const today = new Date().toISOString().slice(0, 10);
     const timestamp = new Date().toISOString().slice(11, 16); // HH:MM
+    const dailyNotesRoot = config.dailyNotesRoot || path.join(
+      os.homedir(),
+      ".openclaw",
+      "workspace",
+      "agents",
+    );
 
     for (const scope of scopes) {
-      const notesDir = path.join(
-        os.homedir(),
-        ".openclaw",
-        "workspace",
-        "agents",
-        scope,
-        "memory",
-      );
+      const notesDir = path.join(dailyNotesRoot, scope, "memory");
       const notesPath = path.join(notesDir, `${today}.md`);
 
       try {

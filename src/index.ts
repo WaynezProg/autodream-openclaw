@@ -28,18 +28,20 @@ export default definePluginEntry({
       (api as unknown as { runtime?: { subagent?: unknown } }).runtime?.subagent ?? null;
 
     // Initialize embedder for re-embedding after merge
+    // API key comes from plugin config (llmApiKey) — never from env vars
     const embeddingModel =
       (pluginConfig as Record<string, unknown>).embeddingModel as string | undefined ??
       "text-embedding-3-small";
-    const openaiApiKey = process.env.OPENAI_API_KEY;
-    const embedder = openaiApiKey
+    const embedderKey =
+      (pluginConfig as Record<string, unknown>).llmApiKey as string | undefined;
+    const embedder = embedderKey
       ? {
           async embed(text: string): Promise<number[]> {
             const res = await fetch("https://api.openai.com/v1/embeddings", {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
-                Authorization: `Bearer ${openaiApiKey}`,
+                Authorization: `Bearer ${embedderKey}`,
               },
               body: JSON.stringify({ model: embeddingModel, input: text }),
             });

@@ -1,3 +1,5 @@
+import os from "node:os";
+import path from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createDreamService, createDreamServiceWithInternals, _testing } from "../src/dream-service.js";
 import type {
@@ -7,6 +9,7 @@ import type {
 
 const mockRunDream = vi.fn();
 const mockWritePersistedDreamStatus = vi.fn();
+const mockReadPersistedDreamStatus = vi.fn();
 
 vi.mock("../src/dream-engine.js", () => ({
   runDream: (...args: unknown[]) => mockRunDream(...args),
@@ -14,20 +17,37 @@ vi.mock("../src/dream-engine.js", () => ({
 
 vi.mock("../src/run-status.js", () => ({
   writePersistedDreamStatus: (...args: unknown[]) => mockWritePersistedDreamStatus(...args),
+  readPersistedDreamStatus: (...args: unknown[]) => mockReadPersistedDreamStatus(...args),
 }));
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
 type AgentEndHandler = () => Promise<void>;
 
+let testRunId = 0;
+let scheduleCounter = 0;
+
 function createMockApi(configOverrides: Record<string, unknown> = {}): {
   api: OpenClawPluginApi;
   agentEndHandlers: AgentEndHandler[];
 } {
   const agentEndHandlers: AgentEndHandler[] = [];
+  const schedulePath = path.join(
+    os.tmpdir(),
+    "autodream-test",
+    `next-run-${testRunId}-${scheduleCounter++}.json`,
+  );
+  const reportDir = path.join(os.tmpdir(), "autodream-test", `reports-${testRunId}`);
+  const dailyNotesRoot = path.join(os.tmpdir(), "autodream-test", `agents-${testRunId}`);
 
   const api = {
-    pluginConfig: { ..._testing.DEFAULT_CONFIG, ...configOverrides },
+    pluginConfig: {
+      ..._testing.DEFAULT_CONFIG,
+      schedulePath,
+      reportDir,
+      dailyNotesRoot,
+      ...configOverrides,
+    },
     logger: {
       info: vi.fn(),
       debug: vi.fn(),
@@ -63,9 +83,18 @@ function createMockCtx(): OpenClawPluginServiceContext {
 
 describe("createDreamService", () => {
   beforeEach(() => {
+    testRunId += 1;
+    scheduleCounter = 0;
     vi.useFakeTimers();
     mockRunDream.mockReset();
     mockWritePersistedDreamStatus.mockReset();
+    mockReadPersistedDreamStatus.mockReset();
+    mockReadPersistedDreamStatus.mockResolvedValue({
+      updatedAt: new Date("2026-04-05T03:00:00.000Z").toISOString(),
+      lastRun: null,
+      lastDeepPromotion: null,
+      lastRemReflection: null,
+    });
     mockRunDream.mockResolvedValue({
       report: {
         timestamp: "2026-04-05T03:00:00.000Z",
@@ -101,27 +130,27 @@ describe("createDreamService", () => {
   });
 
   describe("scheduleNextRun timing", () => {
-    it("should schedule for today if scheduleHour is in the future", () => {
+    it("should schedule for today if scheduleHour is in the future", async () => {
       vi.setSystemTime(new Date("2026-04-05T01:00:00.000Z"));
 
       const { api } = createMockApi({ scheduleHour: 3 });
       const service = createDreamService(api);
 
       const ctx = createMockCtx();
-      service.start(ctx);
+      await service.start(ctx);
       expect(vi.getTimerCount()).toBe(1);
 
       service.stop?.(ctx);
     });
 
-    it("should schedule for tomorrow if scheduleHour has already passed", () => {
+    it("should schedule for tomorrow if scheduleHour has already passed", async () => {
       vi.setSystemTime(new Date("2026-04-05T04:00:00.000Z"));
 
       const { api } = createMockApi({ scheduleHour: 3 });
       const service = createDreamService(api);
 
       const ctx = createMockCtx();
-      service.start(ctx);
+      await service.start(ctx);
       expect(vi.getTimerCount()).toBe(1);
 
       service.stop?.(ctx);
@@ -140,7 +169,7 @@ describe("createDreamService", () => {
 
       const service = createDreamService(api);
       const ctx = createMockCtx();
-      service.start(ctx);
+      await service.start(ctx);
 
       // Run the pending timer to trigger executeDream
       await vi.runOnlyPendingTimersAsync();
@@ -153,6 +182,41 @@ describe("createDreamService", () => {
           typeof c[0] === "string" && c[0].includes("Skipping"),
       );
       expect(skipMessage).toBeDefined();
+
+      service.stop?.(ctx);
+    });
+
+    it("should skip startup catch-up when sessions < minSessionsSinceLastRun", async () => {
+      vi.setSystemTime(new Date("2026-04-05T01:00:00.000Z"));
+      mockReadPersistedDreamStatus.mockResolvedValueOnce({
+        updatedAt: "2026-04-01T03:00:00.000Z",
+        lastRun: {
+          timestamp: "2026-04-01T03:00:00.000Z",
+          scanned: 10,
+          duplicates: 0,
+          conflicts: 0,
+          dryRun: true,
+          trigger: "scheduled",
+          promotions: 0,
+          reflection: false,
+        },
+        lastDeepPromotion: null,
+        lastRemReflection: null,
+      });
+
+      const { api } = createMockApi({
+        intervalHours: 24,
+        minSessionsSinceLastRun: 3,
+      });
+      const service = createDreamService(api);
+      const ctx = createMockCtx();
+
+      await service.start(ctx);
+
+      expect(mockRunDream).not.toHaveBeenCalled();
+      expect(api.logger.debug).toHaveBeenCalledWith(
+        expect.stringContaining("Catch-up skipped"),
+      );
 
       service.stop?.(ctx);
     });
@@ -171,14 +235,14 @@ describe("createDreamService", () => {
   });
 
   describe("stop", () => {
-    it("should clear the timer when stop is called", () => {
+    it("should clear the timer when stop is called", async () => {
       vi.setSystemTime(new Date("2026-04-05T01:00:00.000Z"));
 
       const { api } = createMockApi({ scheduleHour: 3 });
       const service = createDreamService(api);
 
       const ctx = createMockCtx();
-      service.start(ctx);
+      await service.start(ctx);
       expect(vi.getTimerCount()).toBe(1);
 
       service.stop?.(ctx);

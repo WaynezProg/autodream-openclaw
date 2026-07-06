@@ -4,7 +4,9 @@
   "type": "module",
   "main": "dist/index.js",
   "openclaw": {
-    "extensions": ["./dist/index.js"]
+    "extensions": [
+      "./dist/index.js"
+    ]
   },
   "scripts": {
     "build": "tsc",
@@ -13,7 +15,7 @@
   },
   "dependencies": {
     "@lancedb/lancedb": "^0.17.0",
-    "@sinclair/typebox": "^0.34.0"
+    "@sinclair/typebox": "^0.34.49"
   },
   "devDependencies": {
     "typescript": "^5.5.0",

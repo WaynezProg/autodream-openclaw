@@ -49,5 +49,10 @@ describe("deriveCanonicalKey", () => {
   it("does not return over-broad keys", () => {
     expect(deriveCanonicalKey(makeMem("model=qwen/qwen3.7-plus"))).toBeNull();
     expect(deriveCanonicalKey(makeMem("cron 每天跑"))).toBeNull();
+    expect(
+      deriveCanonicalKey(
+        makeMem("7 個 cron payload model 改為 qwen/qwen3.7-plus：lancedb-daily-sync、session-cleanup、session-clean"),
+      ),
+    ).toBeNull();
   });
 });

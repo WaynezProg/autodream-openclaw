@@ -3,7 +3,9 @@ import { parseMetadata } from "../lancedb-adapter.js";
 
 const CONFIG_NAME_PATTERNS = [
   /(?:cron|job|name|id)\s*[:=：]\s*([A-Za-z0-9_.:/-]+)/i,
-  /([A-Za-z0-9_.-]*(?:cron|cleanup|sync|session2memory)[A-Za-z0-9_.-]*)/i,
+  /\b([A-Za-z0-9_.-]+-(?:cron|cleanup|sync|watchdog|archive|tracker|reminder|worker|job)[A-Za-z0-9_.-]*)\b/i,
+  /\b([A-Za-z0-9_.-]*(?:cron|cleanup|sync|watchdog|archive|tracker|reminder|worker|job)-[A-Za-z0-9_.-]+)\b/i,
+  /\b(session2memory)\b/i,
 ];
 
 const MODEL_PATTERNS = [
@@ -40,6 +42,9 @@ export function deriveCanonicalKey(memory: MemoryRecord): string | null {
   const configKey = deriveConfigKey(memory.text);
   if (configKey) {
     return configKey;
+  }
+  if (isAmbiguousConfigList(memory.text)) {
+    return null;
   }
 
   const preferenceKey = derivePatternKey(memory.text, PREFERENCE_PATTERNS);
@@ -78,7 +83,7 @@ function deriveConfigKey(text: string): string | null {
     return null;
   }
 
-  const configName = firstMatch(text, CONFIG_NAME_PATTERNS);
+  const configName = extractSingleConfigName(text);
   const model = firstMatch(text, MODEL_PATTERNS);
 
   if (configName && model) {
@@ -88,7 +93,7 @@ function deriveConfigKey(text: string): string | null {
     return `config:model:${slug(configName)}`;
   }
 
-  const dotted = text.match(/\b([A-Za-z][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)+)\s*[:=：]\s*([A-Za-z0-9_.:/-]+)/);
+  const dotted = text.match(/\b([A-Za-z][A-Za-z_-]*\.[A-Za-z][A-Za-z0-9_-]*(?:\.[A-Za-z][A-Za-z0-9_-]*)*)\s*[:=：]\s*([A-Za-z0-9_.:/-]+)/);
   if (dotted?.[1]) {
     return `config:${slug(dotted[1])}`;
   }
@@ -121,6 +126,48 @@ function firstMatch(text: string, patterns: RegExp[]): string | null {
     }
   }
   return null;
+}
+
+function extractSingleConfigName(text: string): string | null {
+  const names = extractConfigNames(text);
+  return names.size === 1 ? Array.from(names)[0] : null;
+}
+
+function isAmbiguousConfigList(text: string): boolean {
+  return hasConfigSignal(text) && extractConfigNames(text).size > 1;
+}
+
+function hasConfigSignal(text: string): boolean {
+  return (
+    /\b(config|cron|job|payload|model|scope|database_id|data_source_id)\b/i.test(text) ||
+    /(設定|排程|模型)/.test(text)
+  );
+}
+
+function extractConfigNames(text: string): Set<string> {
+  const names = new Set<string>();
+  for (const pattern of CONFIG_NAME_PATTERNS) {
+    for (const match of text.matchAll(toGlobal(pattern))) {
+      if (match[1]) {
+        const normalized = slug(match[1]);
+        if (isSpecificConfigName(normalized)) {
+          names.add(normalized);
+        }
+      }
+    }
+  }
+  return names;
+}
+
+function toGlobal(pattern: RegExp): RegExp {
+  return new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`);
+}
+
+function isSpecificConfigName(value: string): boolean {
+  return (
+    value.includes("-") &&
+    !["cron", "sync", "cleanup", "model", "payload", "job"].includes(value)
+  );
 }
 
 function normalizeKey(key: string): string | null {

@@ -43,6 +43,11 @@ export interface DreamServiceConfig {
   // Recall Tracker
   recallLogDir: string;
   recallMaxAgeDays: number;
+
+  // Supersession Governance
+  supersessionEnabled: boolean;
+  supersessionApply: boolean;
+  supersessionMaxChangesPerRun: number;
 }
 
 const DEFAULT_CONFIG: DreamServiceConfig = {
@@ -72,6 +77,11 @@ const DEFAULT_CONFIG: DreamServiceConfig = {
   // Recall Tracker
   recallLogDir: path.join(os.homedir(), ".openclaw", "memory", "autodream-reports"),
   recallMaxAgeDays: 90,
+
+  // Supersession Governance
+  supersessionEnabled: true,
+  supersessionApply: false,
+  supersessionMaxChangesPerRun: 10,
 };
 
 // ---- Persisted schedule (survives restart + sleep) ----
@@ -261,9 +271,13 @@ export function createDreamServiceWithInternals(
       dryRun:
         !config.autoMergeDuplicates &&
         !config.autoFixTime &&
-        !config.autoDeleteStale,
+        !config.autoDeleteStale &&
+        !config.supersessionApply,
       autoMergeDuplicates: config.autoMergeDuplicates,
       autoFixTime: config.autoFixTime,
+      supersessionEnabled: config.supersessionEnabled,
+      supersessionApply: config.supersessionApply,
+      supersessionMaxChangesPerRun: config.supersessionMaxChangesPerRun,
       staleAgeDays: config.staleAgeDays,
       dedupThreshold: config.dedupThreshold,
       maxChangesPerRun: config.maxChangesPerRun,

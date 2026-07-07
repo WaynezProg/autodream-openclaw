@@ -6,6 +6,8 @@ import type { MemoryRecord } from "../lancedb-adapter.js";
 import type { MergeResult } from "../analysis/dedup-merger.js";
 import type { DeepPromotionResult } from "../analysis/deep-promoter.js";
 import type { RemReflection } from "../analysis/rem-reflector.js";
+import type { SupersessionProposal } from "../analysis/supersession-detector.js";
+import type { SupersessionApplyResult } from "../analysis/supersession-applier.js";
 
 export interface DreamReport {
   timestamp: string;
@@ -46,6 +48,29 @@ export interface DreamReport {
       score: number;
       factors: { ageDays: number; accessCount: number; importance: number };
     }>;
+  };
+  supersession: {
+    count: number;
+    proposals: Array<{
+      old: { id: string; text: string };
+      current: { id: string; text: string };
+      canonicalKey: string;
+      reason: string;
+      confidence: string;
+      action: string;
+      evidence: string[];
+    }>;
+    applied?: {
+      count: number;
+      skipped: number;
+      errors: number;
+      entries: Array<{
+        oldId: string;
+        currentId: string;
+        reason: string;
+        action: string;
+      }>;
+    };
   };
   merges?: {
     count: number;
@@ -92,6 +117,8 @@ export function buildReport(
   noiseDeleted?: number,
   reEmbedded?: number,
   noiseMemories?: MemoryRecord[],
+  supersessionProposals: SupersessionProposal[] = [],
+  supersessionApplyResult?: SupersessionApplyResult,
 ): DreamReport {
   return {
     timestamp: new Date().toISOString(),
@@ -136,6 +163,31 @@ export function buildReport(
           importance: s.factors.importance,
         },
       })),
+    },
+    supersession: {
+      count: supersessionProposals.length,
+      proposals: supersessionProposals.map((p) => ({
+        old: { id: p.old.id, text: truncate(p.old.text, 120) },
+        current: { id: p.current.id, text: truncate(p.current.text, 120) },
+        canonicalKey: p.canonicalKey,
+        reason: p.reason,
+        confidence: p.confidence,
+        action: p.action,
+        evidence: p.evidence,
+      })),
+      applied: supersessionApplyResult
+        ? {
+            count: supersessionApplyResult.applied,
+            skipped: supersessionApplyResult.skipped,
+            errors: supersessionApplyResult.errors.length,
+            entries: supersessionApplyResult.entries.map((e) => ({
+              oldId: e.oldId,
+              currentId: e.currentId,
+              reason: e.reason,
+              action: e.action,
+            })),
+          }
+        : undefined,
     },
     merges:
       merges && merges.length > 0
@@ -187,6 +239,11 @@ export function buildReport(
 }
 
 export function formatReportMarkdown(report: DreamReport): string {
+  const supersession = report.supersession ?? {
+    count: 0,
+    proposals: [],
+    applied: undefined,
+  };
   const lines: string[] = [
     `# 🧠 autoDream Report`,
     ``,
@@ -246,6 +303,32 @@ export function formatReportMarkdown(report: DreamReport): string {
       lines.push(`  - B: \`${pair.b.id}\` — ${pair.b.text}`);
       lines.push(``);
     }
+  }
+
+  lines.push(`## Supersession Proposals (${supersession.count})`);
+  lines.push(``);
+  if (supersession.proposals.length === 0) {
+    lines.push("No supersession proposals found.");
+  } else {
+    for (const proposal of supersession.proposals) {
+      lines.push(
+        `- [${proposal.confidence}] ${proposal.reason} ${proposal.canonicalKey}`,
+      );
+      lines.push(`  - old: \`${proposal.old.id}\` — ${proposal.old.text}`);
+      lines.push(`  - current: \`${proposal.current.id}\` — ${proposal.current.text}`);
+      lines.push(`  - action: ${proposal.action}`);
+      if (proposal.evidence.length > 0) {
+        lines.push(`  - evidence: ${proposal.evidence.join("; ")}`);
+      }
+      lines.push(``);
+    }
+  }
+
+  if (supersession.applied) {
+    lines.push(
+      `Applied: ${supersession.applied.count}, skipped: ${supersession.applied.skipped}, errors: ${supersession.applied.errors}`,
+    );
+    lines.push(``);
   }
 
   lines.push(`## Stale Memories (${report.stale.count})`);
@@ -341,6 +424,11 @@ export function formatReportMarkdown(report: DreamReport): string {
  * Used for notifications and daily notes.
  */
 export function formatCompactReport(report: DreamReport): string | null {
+  const supersession = report.supersession ?? {
+    count: 0,
+    proposals: [],
+    applied: undefined,
+  };
   const lines: string[] = [];
 
   if (report.merges && report.merges.count > 0) {
@@ -359,6 +447,14 @@ export function formatCompactReport(report: DreamReport): string | null {
 
   if (report.conflicts.count > 0) {
     lines.push(`- Conflicts detected: ${report.conflicts.count}`);
+  }
+
+  if (supersession.count > 0) {
+    lines.push(`- Supersession proposals: ${supersession.count}`);
+  }
+
+  if (supersession.applied && supersession.applied.count > 0) {
+    lines.push(`- Supersession applied: ${supersession.applied.count}`);
   }
 
   if (report.promotions && report.promotions.count > 0) {

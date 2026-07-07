@@ -17,7 +17,14 @@ export function registerDreamCli(
     .option("--scope <scope>", "Limit to specific scope")
     .option("--dry-run", "Run in dry-run mode (no changes)", true)
     .option("--no-dry-run", "Apply changes (merge duplicates, fix time)")
-    .action(async (options: { scope?: string; dryRun: boolean }) => {
+    .option("--apply-supersession", "Apply high-confidence supersession metadata changes", false)
+    .option("--supersession-max <n>", "Maximum supersession changes to apply")
+    .action(async (options: {
+      scope?: string;
+      dryRun: boolean;
+      applySupersession?: boolean;
+      supersessionMax?: string;
+    }) => {
       try {
         const result = await runDream({
           scope: options.scope,
@@ -27,6 +34,11 @@ export function registerDreamCli(
           autoMergeDuplicates: asBool(pluginConfig.autoMergeDuplicates),
           autoFixTime: asBool(pluginConfig.autoFixTime),
           staleAgeDays: asNumber(pluginConfig.staleAgeDays),
+          supersessionEnabled: asBool(pluginConfig.supersessionEnabled),
+          supersessionApply: Boolean(options.applySupersession),
+          supersessionMaxChangesPerRun:
+            asCliNumber(options.supersessionMax) ??
+            asNumber(pluginConfig.supersessionMaxChangesPerRun),
         });
 
         if (result.error) {
@@ -50,4 +62,12 @@ function asNumber(v: unknown): number | undefined {
 
 function asBool(v: unknown): boolean | undefined {
   return typeof v === "boolean" ? v : undefined;
+}
+
+function asCliNumber(v: string | undefined): number | undefined {
+  if (v === undefined) {
+    return undefined;
+  }
+  const parsed = Number(v);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }

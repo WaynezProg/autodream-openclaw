@@ -10,6 +10,11 @@ import {
   detectNoiseMemories,
   type NoisePattern,
 } from "./analysis/staleness-scorer.js";
+import { detectSupersessionProposals } from "./analysis/supersession-detector.js";
+import {
+  applySupersessionProposals,
+  type SupersessionApplyResult,
+} from "./analysis/supersession-applier.js";
 import { mergeWithLlm, type MergeResult } from "./analysis/dedup-merger.js";
 import {
   LlmHelper,
@@ -72,6 +77,11 @@ export interface DreamEngineConfig {
   // Recall Tracker
   recallLogDir: string;
   recallMaxAgeDays: number;
+
+  // Supersession Governance
+  supersessionEnabled: boolean;
+  supersessionApply: boolean;
+  supersessionMaxChangesPerRun: number;
 }
 
 import * as os from "node:os";
@@ -103,6 +113,11 @@ const DEFAULT_CONFIG: DreamEngineConfig = {
   // Recall Tracker
   recallLogDir: path.join(os.homedir(), ".openclaw", "memory", "autodream-reports"),
   recallMaxAgeDays: 90,
+
+  // Supersession Governance
+  supersessionEnabled: true,
+  supersessionApply: false,
+  supersessionMaxChangesPerRun: 10,
 };
 
 export interface DreamRunResult {
@@ -233,9 +248,12 @@ export async function runDream(
     const dedupPairs = detectDuplicates(memories, {
       vectorThreshold: config.dedupThreshold,
     });
-    const timeIssues = detectRelativeTime(memories);
     const { confirmed: ruleConflicts, ambiguous } =
       detectConflictsWithAmbiguous(memories);
+    const supersessionProposals = config.supersessionEnabled
+      ? detectSupersessionProposals(memories)
+      : [];
+    const timeIssues = detectRelativeTime(memories);
     const staleItems = scoreAndFilterStale(memories, {
       staleAgeDays: config.staleAgeDays,
     });
@@ -303,7 +321,17 @@ export async function runDream(
       }
     }
 
-    // Phase 3: Apply time fixes (when autoFixTime is on and not dry-run)
+    // Phase 3: Apply supersession metadata (opt-in only)
+    let supersessionApplyResult: SupersessionApplyResult | undefined;
+    if (!dryRun && config.supersessionApply && supersessionProposals.length > 0) {
+      supersessionApplyResult = await applySupersessionProposals(
+        adapter,
+        supersessionProposals,
+        { maxChanges: config.supersessionMaxChangesPerRun },
+      );
+    }
+
+    // Phase 4: Apply time fixes (when autoFixTime is on and not dry-run)
     let timeFixesApplied = 0;
     if (config.autoFixTime && !dryRun) {
       const highConfidence = timeIssues.filter(
@@ -410,6 +438,8 @@ export async function runDream(
       noiseDeleted,
       reEmbedded,
       noiseMemories,
+      supersessionProposals,
+      supersessionApplyResult,
     );
 
     const result: DreamRunResult = {

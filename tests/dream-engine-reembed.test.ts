@@ -25,6 +25,13 @@ vi.mock("../src/lancedb-adapter.js", () => ({
     updateMemoryTextAndVector: mockUpdateMemoryTextAndVector,
     deleteMemory: mockDeleteMemory,
   })),
+  parseMetadata: (raw: string) => {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return {};
+    }
+  },
 }));
 
 // Mock dedup-detector to return controlled pairs

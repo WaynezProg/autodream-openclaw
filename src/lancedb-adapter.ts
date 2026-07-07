@@ -47,7 +47,7 @@ export interface ParsedMetadata {
   valid_from?: number;
   invalidated_at?: number;
   fact_key?: string;
-  supersedes?: string;
+  supersedes?: string | string[];
   superseded_by?: string;
   source_session?: string;
   // Supersession governance fields
@@ -276,7 +276,7 @@ export class LanceDbAdapter {
   async updateMemoryMetadata(
     id: string,
     metadataPatch: Partial<ParsedMetadata>,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const db = this.ensureConnected();
     const table = await db.openTable(this.tableName);
     const escapedId = id.replace(/'/g, "''");
@@ -296,6 +296,7 @@ export class LanceDbAdapter {
       where: `id = '${escapedId}'`,
       values: { metadata: newMetadataJson },
     });
+    return true;
   }
 
   /**

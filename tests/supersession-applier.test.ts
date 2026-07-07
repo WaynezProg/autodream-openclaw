@@ -1,5 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { LanceDbAdapter, parseMetadata } from "../src/lancedb-adapter.js";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { LanceDbAdapter, parseMetadata, type MemoryRecord } from "../src/lancedb-adapter.js";
+import { applySupersessionProposals } from "../src/analysis/supersession-applier.js";
+import type { SupersessionProposal } from "../src/analysis/supersession-detector.js";
 import * as lancedb from "@lancedb/lancedb";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -101,3 +103,149 @@ describe("LanceDbAdapter.updateMemoryMetadata", () => {
     ).rejects.toThrow("Memory not found");
   });
 });
+
+describe("applySupersessionProposals", () => {
+  it("applies high confidence metadata-only changes", async () => {
+    const adapter = { updateMemoryMetadata: vi.fn().mockResolvedValue(true) };
+    const proposal = makeProposal();
+
+    const result = await applySupersessionProposals(adapter, [proposal], {
+      maxChanges: 10,
+      now: 1234,
+    });
+
+    expect(result.applied).toBe(1);
+    expect(adapter.updateMemoryMetadata).toHaveBeenCalledTimes(2);
+    expect(adapter.updateMemoryMetadata).toHaveBeenCalledWith("old-a", {
+      state: "superseded",
+      valid_until: 1234,
+      superseded_by: "new-b",
+      supersession_reason: "method_migration",
+      canonical_key: "workflow:session-cleanup",
+    });
+    expect(adapter.updateMemoryMetadata).toHaveBeenCalledWith("new-b", {
+      state: "confirmed",
+      supersedes: ["old-a"],
+      canonical_key: "workflow:session-cleanup",
+    });
+  });
+
+  it("marks changed preferences as obsolete_preference", async () => {
+    const adapter = { updateMemoryMetadata: vi.fn().mockResolvedValue(true) };
+    const proposal = makeProposal({
+      reason: "preference_changed",
+      action: "mark_obsolete_preference",
+    });
+
+    await applySupersessionProposals(adapter, [proposal], {
+      maxChanges: 10,
+      now: 1234,
+    });
+
+    expect(adapter.updateMemoryMetadata).toHaveBeenCalledWith(
+      "old-a",
+      expect.objectContaining({ state: "obsolete_preference" }),
+    );
+  });
+
+  it("skips low confidence, flag_conflict, and proposals beyond maxChanges", async () => {
+    const adapter = { updateMemoryMetadata: vi.fn().mockResolvedValue(true) };
+    const proposals = [
+      makeProposal({ old: makeRecord("old-1"), current: makeRecord("new-1") }),
+      makeProposal({
+        old: makeRecord("old-2"),
+        current: makeRecord("new-2"),
+        confidence: "low",
+      }),
+      makeProposal({
+        old: makeRecord("old-3"),
+        current: makeRecord("new-3"),
+        action: "flag_conflict",
+      }),
+      makeProposal({ old: makeRecord("old-4"), current: makeRecord("new-4") }),
+    ];
+
+    const result = await applySupersessionProposals(adapter, proposals, {
+      maxChanges: 1,
+      now: 1234,
+    });
+
+    expect(result.applied).toBe(1);
+    expect(result.skipped).toBe(3);
+    expect(adapter.updateMemoryMetadata).toHaveBeenCalledTimes(2);
+    expect(adapter.updateMemoryMetadata).toHaveBeenCalledWith(
+      "old-1",
+      expect.any(Object),
+    );
+  });
+
+  it("protects core memories unless newer preference is at least as important", async () => {
+    const adapter = { updateMemoryMetadata: vi.fn().mockResolvedValue(true) };
+    const coreMethod = makeProposal({
+      old: makeRecord("core-old", {
+        importance: 0.9,
+        metadata: JSON.stringify({ tier: "core" }),
+      }),
+      current: makeRecord("method-new", { importance: 0.95 }),
+      reason: "method_migration",
+    });
+    const corePreference = makeProposal({
+      old: makeRecord("pref-old", {
+        importance: 0.7,
+        metadata: JSON.stringify({ tier: "core" }),
+      }),
+      current: makeRecord("pref-new", { importance: 0.8 }),
+      reason: "preference_changed",
+      action: "mark_obsolete_preference",
+    });
+
+    const result = await applySupersessionProposals(
+      adapter,
+      [coreMethod, corePreference],
+      { maxChanges: 10, now: 1234 },
+    );
+
+    expect(result.applied).toBe(1);
+    expect(result.skipped).toBe(1);
+    expect(adapter.updateMemoryMetadata).not.toHaveBeenCalledWith(
+      "core-old",
+      expect.any(Object),
+    );
+    expect(adapter.updateMemoryMetadata).toHaveBeenCalledWith(
+      "pref-old",
+      expect.objectContaining({ state: "obsolete_preference" }),
+    );
+  });
+});
+
+function makeRecord(id: string, opts: Partial<MemoryRecord> = {}): MemoryRecord {
+  return {
+    id,
+    text: opts.text ?? `${id} text`,
+    category: opts.category ?? "decision",
+    scope: opts.scope ?? "global",
+    importance: opts.importance ?? 0.5,
+    timestamp: opts.timestamp ?? 1,
+    metadata: opts.metadata ?? "{}",
+    vector: opts.vector ?? [],
+  };
+}
+
+function makeProposal(
+  opts: Partial<SupersessionProposal> = {},
+): SupersessionProposal {
+  return {
+    old: opts.old ?? makeRecord("old-a"),
+    current:
+      opts.current ??
+      makeRecord("new-b", {
+        metadata: JSON.stringify({ supersedes: [] }),
+        timestamp: 2,
+      }),
+    canonicalKey: opts.canonicalKey ?? "workflow:session-cleanup",
+    reason: opts.reason ?? "method_migration",
+    confidence: opts.confidence ?? "high",
+    evidence: opts.evidence ?? ["test"],
+    action: opts.action ?? "mark_superseded",
+  };
+}

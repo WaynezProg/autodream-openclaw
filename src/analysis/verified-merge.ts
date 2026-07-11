@@ -1,9 +1,10 @@
 import type { DedupPair } from "./dedup-detector.js";
 import type { MergeResult } from "./dedup-merger.js";
 import type { LanceDbAdapter } from "../lancedb-adapter.js";
+import { parseMetadata } from "../lancedb-adapter.js";
 
 export interface VerifiedMergeResult {
-  status: "applied" | "rejected" | "failed";
+  status: "applied" | "rejected" | "failed" | "rollback_failed";
   reason?: string;
 }
 
@@ -19,6 +20,12 @@ export async function applyVerifiedMerge(args: {
   const pair: DedupPair = merge.pair;
   if (pair.a.scope !== pair.b.scope || pair.a.category !== pair.b.category) {
     return { status: "rejected", reason: "cross_scope_or_category" };
+  }
+  if (
+    parseMetadata(pair.a.metadata).tier === "core" ||
+    parseMetadata(pair.b.metadata).tier === "core"
+  ) {
+    return { status: "rejected", reason: "core_protected" };
   }
 
   const before = await adapter.getMemoryById(merge.keepId);
@@ -50,15 +57,27 @@ export async function applyVerifiedMerge(args: {
     readBack.text !== merge.mergedText ||
     readBack.vector.length !== newVector.length
   ) {
-    await adapter.updateMemoryTextAndVector(before.id, before.text, before.vector);
-    return { status: "failed", reason: "read_back_mismatch" };
+    const rolledBack = await adapter.updateMemoryTextAndVector(
+      before.id,
+      before.text,
+      before.vector,
+    );
+    return rolledBack
+      ? { status: "failed", reason: "read_back_mismatch" }
+      : { status: "rollback_failed", reason: "read_back_mismatch" };
   }
 
   for (const id of merge.originalsToDelete) {
     const deleted = await adapter.deleteMemory(id);
     if (!deleted) {
-      await adapter.updateMemoryTextAndVector(before.id, before.text, before.vector);
-      return { status: "failed", reason: `delete_failed:${id}` };
+      const rolledBack = await adapter.updateMemoryTextAndVector(
+        before.id,
+        before.text,
+        before.vector,
+      );
+      return rolledBack
+        ? { status: "failed", reason: `delete_failed:${id}` }
+        : { status: "rollback_failed", reason: `delete_failed:${id}` };
     }
   }
   return { status: "applied" };

@@ -49,10 +49,23 @@ export function registerDreamCli(
               supersessionEnabled: asBool(pluginConfig.supersessionEnabled),
               supersessionApply: asBool(pluginConfig.supersessionApply),
               supersessionMaxChangesPerRun: asNumber(pluginConfig.supersessionMaxChangesPerRun),
+              llmEnabled: asBool(pluginConfig.llmEnabled),
+              llmModel: asString(pluginConfig.llmModel),
+              llmMaxCalls: asNumber(pluginConfig.llmMaxCalls),
+              llmProvider: asLlmProvider(pluginConfig.llmProvider),
+              llmBaseUrl: asString(pluginConfig.llmBaseUrl),
+              llmApiKey: asString(pluginConfig.llmApiKey),
             },
           });
           console.log(JSON.stringify(governance));
           if (governance.status !== "success") process.exitCode = 1;
+          return;
+        }
+        if (!options.dryRun) {
+          console.error(
+            "[autodream] Direct mutation is disabled during the shadow rollout; use --governance --shadow.",
+          );
+          process.exitCode = 1;
           return;
         }
         const result = await runDream({
@@ -91,6 +104,14 @@ function asNumber(v: unknown): number | undefined {
 
 function asBool(v: unknown): boolean | undefined {
   return typeof v === "boolean" ? v : undefined;
+}
+
+function asString(v: unknown): string | undefined {
+  return typeof v === "string" ? v : undefined;
+}
+
+function asLlmProvider(v: unknown): "openai" | "anthropic" | undefined {
+  return v === "openai" || v === "anthropic" ? v : undefined;
 }
 
 function asCliNumber(v: string | undefined): number | undefined {

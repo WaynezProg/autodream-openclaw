@@ -265,12 +265,16 @@ export async function runDream(
 
     // Phase 2c: Apply merges + re-embed (when autoMerge is on and not dry-run)
     let reEmbedded = 0;
+    const mutationFailures: string[] = [];
     if (merges.length > 0 && !dryRun) {
       const embedder = config.embedder;
       for (const merge of merges) {
         if (!embedder) continue;
         const applied = await applyVerifiedMerge({ adapter, merge, embedder });
         if (applied.status === "applied") reEmbedded++;
+        if (applied.status === "failed" || applied.status === "rollback_failed") {
+          mutationFailures.push(`merge_${applied.status}:${applied.reason ?? "unknown"}`);
+        }
       }
     }
 
@@ -282,6 +286,9 @@ export async function runDream(
         supersessionProposals,
         { maxChanges: config.supersessionMaxChangesPerRun },
       );
+      for (const failure of supersessionApplyResult.errors) {
+        mutationFailures.push(`supersession_failed:${failure.error}`);
+      }
     }
 
     // Phase 4: Apply time fixes (when autoFixTime is on and not dry-run)
@@ -401,6 +408,9 @@ export async function runDream(
       llmCallsUsed: llm?.used,
       promotions,
       reflection,
+      ...(mutationFailures.length > 0
+        ? { error: mutationFailures.join("; ") }
+        : {}),
     };
     lastRunResult = result;
     return result;

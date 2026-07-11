@@ -78,16 +78,18 @@ describe("dream CLI command", () => {
     );
   });
 
-  it("passes --no-dry-run correctly", async () => {
+  it("rejects direct --no-dry-run mutation during shadow rollout", async () => {
     const { ctx, program } = buildCtx();
     mockRunDream.mockResolvedValue(fakeResult());
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
 
     registerDreamCli(ctx, {});
     await program.parseAsync(["dream", "--no-dry-run"], { from: "user" });
 
-    expect(mockRunDream).toHaveBeenCalledWith(
-      expect.objectContaining({ dryRun: false }),
-    );
+    expect(mockRunDream).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+    process.exitCode = previousExitCode;
   });
 
   it("does not apply supersession with --no-dry-run alone", async () => {
@@ -97,12 +99,10 @@ describe("dream CLI command", () => {
     registerDreamCli(ctx, {});
     await program.parseAsync(["dream", "--no-dry-run"], { from: "user" });
 
-    expect(mockRunDream).toHaveBeenCalledWith(
-      expect.objectContaining({ dryRun: false, supersessionApply: false }),
-    );
+    expect(mockRunDream).not.toHaveBeenCalled();
   });
 
-  it("passes supersession apply switches", async () => {
+  it("rejects direct supersession apply switches", async () => {
     const { ctx, program } = buildCtx();
     mockRunDream.mockResolvedValue(fakeResult());
 
@@ -112,13 +112,7 @@ describe("dream CLI command", () => {
       { from: "user" },
     );
 
-    expect(mockRunDream).toHaveBeenCalledWith(
-      expect.objectContaining({
-        dryRun: false,
-        supersessionApply: true,
-        supersessionMaxChangesPerRun: 10,
-      }),
-    );
+    expect(mockRunDream).not.toHaveBeenCalled();
   });
 
   it("passes --scope option to runDream", async () => {

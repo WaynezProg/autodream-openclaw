@@ -78,6 +78,10 @@ function classifyPair(
   const currentText = currentMemory.text;
   const oldText = oldMemory.text;
   const evidence: string[] = [];
+  const explicitCanonicalMatch =
+    Boolean(oldMeta.canonical_key) &&
+    Boolean(currentMeta.canonical_key) &&
+    oldMeta.canonical_key === currentMeta.canonical_key;
 
   if (isConfigDrift(oldText, currentText)) {
     evidence.push("newer memory changes a concrete config value");
@@ -101,6 +105,9 @@ function classifyPair(
     (oldMemory.category === currentMemory.category || currentMemory.category === "decision")
   ) {
     evidence.push("newer memory contains migration/deprecation signal");
+    if (explicitCanonicalMatch) {
+      evidence.push("explicit canonical_key matched on both memories");
+    }
     if (mentionsReplacedMethod(oldText, currentText)) {
       evidence.push("older memory appears to mention the replaced method");
     }

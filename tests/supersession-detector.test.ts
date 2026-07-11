@@ -40,6 +40,7 @@ describe("detectSupersessionProposals", () => {
     expect(proposals[0].action).toBe("mark_superseded");
     expect(proposals[0].old.id).toBe("method-a");
     expect(proposals[0].current.id).toBe("method-b");
+    expect(proposals[0].confidence).toBe("high");
   });
 
   it("detects preference changes as obsolete preferences", () => {

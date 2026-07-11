@@ -49,6 +49,22 @@ describe("applyVerifiedMerge", () => {
     }
   });
 
+  it("rejects a merge when either side is core", async () => {
+    for (const unsafePair of [
+      pair({ a: memory("keep", { metadata: JSON.stringify({ tier: "core" }) }) }),
+      pair({ b: memory("delete", { metadata: JSON.stringify({ tier: "core" }) }) }),
+    ]) {
+      const db = adapter();
+      const result = await applyVerifiedMerge({
+        adapter: db,
+        merge: { pair: unsafePair, keepId: "keep", originalsToDelete: ["delete"], mergedText: "merged memory" },
+        embedder: { embed: vi.fn().mockResolvedValue([1, 0, 0]) },
+      });
+      expect(result).toMatchObject({ status: "rejected", reason: "core_protected" });
+      expect(db.deleteMemory).not.toHaveBeenCalled();
+    }
+  });
+
   it.each([
     ["embed failure", { embed: vi.fn().mockRejectedValue(new Error("embed")) }, adapter()],
     ["dimension mismatch", { embed: vi.fn().mockResolvedValue([1, 0]) }, adapter()],
@@ -78,5 +94,18 @@ describe("applyVerifiedMerge", () => {
     expect(db.updateMemoryTextAndVector.mock.invocationCallOrder[0]).toBeLessThan(
       db.deleteMemory.mock.invocationCallOrder[0],
     );
+  });
+
+  it("reports rollback failure instead of hiding it", async () => {
+    const db = adapter(memory("keep", { text: "wrong" }));
+    db.updateMemoryTextAndVector
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+    const result = await applyVerifiedMerge({
+      adapter: db,
+      merge: { pair: pair(), keepId: "keep", originalsToDelete: ["delete"], mergedText: "merged memory" },
+      embedder: { embed: vi.fn().mockResolvedValue([1, 0, 0]) },
+    });
+    expect(result).toMatchObject({ status: "rollback_failed" });
   });
 });

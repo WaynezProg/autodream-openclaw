@@ -236,6 +236,40 @@ describe("applySupersessionProposals", () => {
       JSON.stringify({ supersedes: [] }),
     );
   });
+
+  it("surfaces rollback failure", async () => {
+    const adapter = makeAdapter();
+    adapter.updateMemoryMetadata
+      .mockResolvedValueOnce(true)
+      .mockRejectedValueOnce(new Error("second update failed"));
+    adapter.replaceMemoryMetadata.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+
+    const result = await applySupersessionProposals(adapter, [makeProposal()], {
+      maxChanges: 10,
+      now: 1234,
+    });
+
+    expect(result.errors[0].error).toContain("rollback failed");
+  });
+
+  it("protects a core current row as well as a core old row", async () => {
+    const adapter = makeAdapter();
+    const proposal = makeProposal({
+      current: makeRecord("core-current", {
+        timestamp: 2,
+        metadata: JSON.stringify({ tier: "core" }),
+      }),
+    });
+
+    const result = await applySupersessionProposals(adapter, [proposal], {
+      maxChanges: 10,
+      now: 1234,
+    });
+
+    expect(result.applied).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(adapter.updateMemoryMetadata).not.toHaveBeenCalled();
+  });
 });
 
 function makeAdapter() {
@@ -257,6 +291,7 @@ function makeAdapter() {
     ["method-new", makeRecord("method-new")],
     ["pref-old", makeRecord("pref-old", { metadata: JSON.stringify({ tier: "core" }) })],
     ["pref-new", makeRecord("pref-new")],
+    ["core-current", makeRecord("core-current", { metadata: JSON.stringify({ tier: "core" }) })],
   ]);
   const updateMemoryMetadata = vi.fn(async (id: string, patch: Record<string, unknown>) => {
     const row = rows.get(id);

@@ -96,13 +96,17 @@ export async function applySupersessionProposals(
         action: proposal.action,
       });
     } catch (err) {
-      await Promise.allSettled([
+      const rollback = await Promise.allSettled([
         adapter.replaceMemoryMetadata(proposal.old.id, beforeOldMetadata),
         adapter.replaceMemoryMetadata(proposal.current.id, beforeCurrentMetadata),
       ]);
+      const rollbackFailed = rollback.some(
+        (item) => item.status === "rejected" || item.value !== true,
+      );
+      const originalError = err instanceof Error ? err.message : String(err);
       result.errors.push({
         proposal,
-        error: err instanceof Error ? err.message : String(err),
+        error: rollbackFailed ? `${originalError}; rollback failed` : originalError,
       });
     }
   }
@@ -116,7 +120,8 @@ function shouldApply(proposal: SupersessionProposal): boolean {
   }
 
   const oldMetadata = parseMetadata(proposal.old.metadata);
-  return oldMetadata.tier !== "core";
+  const currentMetadata = parseMetadata(proposal.current.metadata);
+  return oldMetadata.tier !== "core" && currentMetadata.tier !== "core";
 }
 
 function appendUnique(existing: ParsedMetadata["supersedes"], id: string): string[] {

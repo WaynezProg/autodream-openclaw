@@ -102,7 +102,8 @@ export function createDreamNowTool(
 
         const result = await runDream({
           scope: params.scope,
-          dryRun: params.dryRun ?? true,
+          // Semantic mutation remains gated until the shadow rollout is reviewed.
+          dryRun: true,
           dedupThreshold,
           maxChangesPerRun,
           autoMergeDuplicates,

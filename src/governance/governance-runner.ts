@@ -37,6 +37,7 @@ const DEFAULT_ARTIFACT_DIR = path.join(
   "memory",
   "autodream-governance",
 );
+const STALE_LOCK_AGE_MS = 2 * 60 * 60 * 1000;
 
 export async function runGovernance(
   options: GovernanceRunOptions = {},
@@ -53,9 +54,7 @@ export async function runGovernance(
 
   let lockHandle: fs.promises.FileHandle;
   try {
-    lockHandle = await fs.promises.open(lockPath, "wx");
-    await lockHandle.writeFile(JSON.stringify({ pid: process.pid, runId, startedAt }));
-    await lockHandle.sync();
+    lockHandle = await acquireLock(lockPath, { pid: process.pid, runId, startedAt });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "EEXIST") {
       return { status: "locked", runId, shadow, applied: 0, manifestPath: "", error: "governance lock is held" };
@@ -77,12 +76,16 @@ export async function runGovernance(
       .update(JSON.stringify({ shadow, dreamOptions }))
       .digest("hex");
     let dreamResult: DreamRunResult | undefined;
-    let errorMessage: string | undefined;
-    try {
-      dreamResult = await (options.runDreamFn ?? runDream)(dreamOptions);
-      errorMessage = dreamResult.error;
-    } catch (error) {
-      errorMessage = error instanceof Error ? error.message : String(error);
+    let errorMessage: string | undefined = shadow
+      ? undefined
+      : "Non-shadow governance is disabled during the shadow rollout";
+    if (!errorMessage) {
+      try {
+        dreamResult = await (options.runDreamFn ?? runDream)(dreamOptions);
+        errorMessage = dreamResult.error;
+      } catch (error) {
+        errorMessage = error instanceof Error ? error.message : String(error);
+      }
     }
 
     const finishedAt = new Date().toISOString();
@@ -111,9 +114,10 @@ export async function runGovernance(
       skips: shadow ? [{ reason: "shadow_mode", mutations: "disabled" }] : [],
       failures: errorMessage ? [{ phase: "analysis", error: errorMessage }] : [],
       benchmark: {
-        activeRecallDelta: 0,
-        historyRecallDelta: 0,
-        targetedRecallDelta: 0,
+        status: "not_run",
+        activeRecallDelta: null,
+        historyRecallDelta: null,
+        targetedRecallDelta: null,
       },
       rollback: { attempted: false, status: "not_required" },
     };
@@ -142,5 +146,48 @@ export async function runGovernance(
   } finally {
     await lockHandle.close();
     await fs.promises.rm(lockPath, { force: true });
+  }
+}
+
+async function acquireLock(
+  lockPath: string,
+  value: { pid: number; runId: string; startedAt: string },
+): Promise<fs.promises.FileHandle> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const handle = await fs.promises.open(lockPath, "wx");
+      await handle.writeFile(JSON.stringify(value));
+      await handle.sync();
+      return handle;
+    } catch (error) {
+      if (
+        (error as NodeJS.ErrnoException).code !== "EEXIST" ||
+        attempt > 0 ||
+        !(await isStaleDeadLock(lockPath))
+      ) {
+        throw error;
+      }
+      await fs.promises.rm(lockPath, { force: true });
+    }
+  }
+  throw new Error("unable to acquire governance lock");
+}
+
+async function isStaleDeadLock(lockPath: string): Promise<boolean> {
+  const lock = await readJsonFile<{ pid?: number; startedAt?: string } | null>(
+    lockPath,
+    null,
+  );
+  if (!lock) return false;
+  const startedAt = Date.parse(lock.startedAt ?? "");
+  if (!Number.isFinite(startedAt) || Date.now() - startedAt <= STALE_LOCK_AGE_MS) {
+    return false;
+  }
+  if (!Number.isInteger(lock.pid) || (lock.pid ?? 0) <= 0) return true;
+  try {
+    process.kill(lock.pid!, 0);
+    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ESRCH";
   }
 }

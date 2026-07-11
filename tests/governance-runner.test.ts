@@ -45,6 +45,12 @@ describe("runGovernance", () => {
     expect(manifest.schemaVersion).toBe(1);
     expect(manifest.phaseCounts.scanned).toBe(12);
     expect(manifest.actions).toEqual([]);
+    expect(manifest.benchmark).toEqual({
+      status: "not_run",
+      activeRecallDelta: null,
+      historyRecallDelta: null,
+      targetedRecallDelta: null,
+    });
     expect(status.lastAttempt.runId).toBe("run-success");
     expect(status.lastSuccess.runId).toBe("run-success");
     expect(fs.existsSync(path.join(dir, "governance.lock"))).toBe(false);
@@ -68,6 +74,29 @@ describe("runGovernance", () => {
     expect(result.status).toBe("locked");
     expect(result.applied).toBe(0);
     expect(runDreamFn).not.toHaveBeenCalled();
+  });
+
+  it("recovers a stale lock owned by a dead process", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "autodream-governance-stale-lock-"));
+    const lockPath = path.join(dir, "governance.lock");
+    fs.writeFileSync(lockPath, JSON.stringify({
+      pid: 99999999,
+      runId: "dead",
+      startedAt: "2020-01-01T00:00:00.000Z",
+    }));
+    const runDreamFn = vi.fn().mockResolvedValue(fakeDreamResult());
+
+    const result = await runGovernance({
+      artifactDir: dir,
+      lockPath,
+      shadow: true,
+      trigger: "test",
+      runId: "run-recovered",
+      runDreamFn,
+    });
+
+    expect(result.status).toBe("success");
+    expect(runDreamFn).toHaveBeenCalledOnce();
   });
 
   it("records failure and never advances lastSuccess", async () => {
@@ -112,5 +141,23 @@ describe("runGovernance", () => {
     expect(second.applied).toBe(0);
     expect(runDreamFn).toHaveBeenNthCalledWith(1, expect.objectContaining({ dryRun: true }));
     expect(runDreamFn).toHaveBeenNthCalledWith(2, expect.objectContaining({ dryRun: true }));
+  });
+
+  it("rejects non-shadow execution until rollout gates are implemented", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "autodream-governance-apply-"));
+    const runDreamFn = vi.fn();
+    const result = await runGovernance({
+      artifactDir: dir,
+      lockPath: path.join(dir, "governance.lock"),
+      shadow: false,
+      trigger: "test",
+      runId: "run-apply-blocked",
+      runDreamFn,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.applied).toBe(0);
+    expect(result.error).toContain("shadow rollout");
+    expect(runDreamFn).not.toHaveBeenCalled();
   });
 });

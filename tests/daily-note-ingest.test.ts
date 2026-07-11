@@ -2,7 +2,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { collectDailyNotes } from "../scripts/daily-note-ingest.mjs";
+import {
+  collectDailyNotes,
+  parseImportOutput,
+  parseJsonOutput,
+} from "../scripts/daily-note-ingest.mjs";
 
 describe("collectDailyNotes", () => {
   it("collects only tagged durable bullets from today and yesterday with stable ids", async () => {
@@ -27,5 +31,19 @@ describe("collectDailyNotes", () => {
     expect(first.map((entry) => entry.memory.category)).toEqual(["decision", "fact"]);
     expect(first.map((entry) => entry.memory.id)).toEqual(second.map((entry) => entry.memory.id));
     expect(first.some((entry) => entry.memory.text.includes("#todo"))).toBe(false);
+  });
+});
+
+describe("parseJsonOutput", () => {
+  it("parses JSON emitted after plugin diagnostics", () => {
+    expect(parseJsonOutput("[plugins] loaded\n{\"memory\":{\"totalCount\":3}}\n"))
+      .toEqual({ memory: { totalCount: 3 } });
+  });
+});
+
+describe("parseImportOutput", () => {
+  it("extracts counts without retaining plugin diagnostics", () => {
+    expect(parseImportOutput("[plugins] loaded\nImport completed: 0 imported, 4 skipped\n"))
+      .toEqual({ imported: 0, skipped: 4 });
   });
 });

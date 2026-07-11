@@ -108,6 +108,18 @@ async function runOpenClaw(args) {
   });
 }
 
+export function parseJsonOutput(output) {
+  const match = output.match(/(?:^|\n)(\{[\s\S]*\})\s*$/);
+  if (!match) throw new Error("OpenClaw command did not emit a JSON object");
+  return JSON.parse(match[1]);
+}
+
+export function parseImportOutput(output) {
+  const match = output.match(/Import completed:\s*(\d+) imported,\s*(\d+) skipped/);
+  if (!match) throw new Error("OpenClaw import did not emit completion counts");
+  return { imported: Number(match[1]), skipped: Number(match[2]) };
+}
+
 async function writeImportFile(memories) {
   const filePath = path.join(os.tmpdir(), `openclaw-daily-note-${randomUUID()}.json`);
   await fs.promises.writeFile(filePath, `${JSON.stringify({ memories })}\n`, {
@@ -145,14 +157,18 @@ export async function runDailyIngest(options = {}) {
   for (const [scope, scopedEntries] of groups) {
     const filePath = await writeImportFile(scopedEntries.map((entry) => entry.memory));
     try {
-      const { stdout } = await runOpenClaw(["memory-pro", "import", filePath, "--scope", scope]);
-      imports.push({ scope, candidates: scopedEntries.length, output: stdout.trim() });
+      const result = await runOpenClaw(["memory-pro", "import", filePath, "--scope", scope]);
+      imports.push({
+        scope,
+        candidates: scopedEntries.length,
+        ...parseImportOutput(`${result.stdout}\n${result.stderr}`),
+      });
     } finally {
       await fs.promises.rm(filePath, { force: true });
     }
   }
-  const { stdout: statsOutput } = await runOpenClaw(["memory-pro", "stats", "--json"]);
-  const stats = JSON.parse(statsOutput.slice(statsOutput.indexOf("{"), statsOutput.lastIndexOf("}") + 1));
+  const statsResult = await runOpenClaw(["memory-pro", "stats", "--json"]);
+  const stats = parseJsonOutput(`${statsResult.stdout}\n${statsResult.stderr}`);
   return { status: "success", date, backupPath, candidates: entries.length, imports, stats };
 }
 

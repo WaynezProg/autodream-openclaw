@@ -115,9 +115,17 @@ export function parseJsonOutput(output) {
 }
 
 export function parseImportOutput(output) {
-  const match = output.match(/Import completed:\s*(\d+) imported,\s*(\d+) skipped/);
+  const match = output.match(
+    /Import completed:\s*(\d+) imported,\s*(\d+) skipped,\s*(\d+) failed/,
+  );
   if (!match) throw new Error("OpenClaw import did not emit completion counts");
-  return { imported: Number(match[1]), skipped: Number(match[2]) };
+  const result = {
+    imported: Number(match[1]),
+    skipped: Number(match[2]),
+    failed: Number(match[3]),
+  };
+  if (result.failed > 0) throw new Error(`OpenClaw import failed for ${result.failed} memories`);
+  return result;
 }
 
 async function writeImportFile(memories) {
@@ -169,6 +177,15 @@ export async function runDailyIngest(options = {}) {
   }
   const statsResult = await runOpenClaw(["memory-pro", "stats", "--json"]);
   const stats = parseJsonOutput(`${statsResult.stdout}\n${statsResult.stderr}`);
+  const backupData = JSON.parse(await fs.promises.readFile(backupPath, "utf8"));
+  if (
+    backupData.count !== stats?.memory?.totalCount ||
+    backupData.memories?.length !== stats?.memory?.totalCount
+  ) {
+    throw new Error(
+      `memory backup is incomplete: exported ${backupData.count ?? "unknown"} of ${stats?.memory?.totalCount ?? "unknown"}`,
+    );
+  }
   return { status: "success", date, backupPath, candidates: entries.length, imports, stats };
 }
 

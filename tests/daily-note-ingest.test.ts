@@ -43,7 +43,7 @@ describe("parseJsonOutput", () => {
 
 describe("parseImportOutput", () => {
   it("extracts counts without retaining plugin diagnostics", () => {
-    expect(parseImportOutput("[plugins] loaded\nImport completed: 0 imported, 4 skipped\n"))
-      .toEqual({ imported: 0, skipped: 4 });
+    expect(parseImportOutput("[plugins] loaded\nImport completed: 0 imported, 4 skipped, 0 failed\n"))
+      .toEqual({ imported: 0, skipped: 4, failed: 0 });
   });
 });

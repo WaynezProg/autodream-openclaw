@@ -158,7 +158,13 @@ async function backup(openclawDir, date) {
 export async function runDailyIngest(options = {}) {
   const openclawDir = options.openclawDir ?? path.join(os.homedir(), ".openclaw");
   const date = options.date ?? new Date().toLocaleDateString("en-CA");
+  const beforeStatsResult = await runOpenClaw(["memory-pro", "stats", "--json"]);
+  const beforeStats = parseJsonOutput(
+    `${beforeStatsResult.stdout}\n${beforeStatsResult.stderr}`,
+  );
   const backupPath = await backup(openclawDir, date);
+  const backupData = JSON.parse(await fs.promises.readFile(backupPath, "utf8"));
+  verifyBackupCoverage(backupData, beforeStats?.memory?.totalCount);
   const entries = await collectDailyNotes({ openclawDir, date });
   const groups = Map.groupBy(entries, (entry) => entry.scope);
   const imports = [];
@@ -177,16 +183,18 @@ export async function runDailyIngest(options = {}) {
   }
   const statsResult = await runOpenClaw(["memory-pro", "stats", "--json"]);
   const stats = parseJsonOutput(`${statsResult.stdout}\n${statsResult.stderr}`);
-  const backupData = JSON.parse(await fs.promises.readFile(backupPath, "utf8"));
+  return { status: "success", date, backupPath, candidates: entries.length, imports, stats };
+}
+
+export function verifyBackupCoverage(backupData, expectedCount) {
   if (
-    backupData.count !== stats?.memory?.totalCount ||
-    backupData.memories?.length !== stats?.memory?.totalCount
+    backupData?.count !== expectedCount ||
+    backupData?.memories?.length !== expectedCount
   ) {
     throw new Error(
-      `memory backup is incomplete: exported ${backupData.count ?? "unknown"} of ${stats?.memory?.totalCount ?? "unknown"}`,
+      `memory backup is incomplete: exported ${backupData?.count ?? "unknown"} of ${expectedCount ?? "unknown"}`,
     );
   }
-  return { status: "success", date, backupPath, candidates: entries.length, imports, stats };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

@@ -37,7 +37,6 @@ const DEFAULT_ARTIFACT_DIR = path.join(
   "memory",
   "autodream-governance",
 );
-const STALE_LOCK_AGE_MS = 2 * 60 * 60 * 1000;
 
 export async function runGovernance(
   options: GovernanceRunOptions = {},
@@ -160,61 +159,8 @@ async function acquireLock(
   lockPath: string,
   value: { pid: number; runId: string; startedAt: string },
 ): Promise<fs.promises.FileHandle> {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const handle = await fs.promises.open(lockPath, "wx");
-      await handle.writeFile(JSON.stringify(value));
-      await handle.sync();
-      return handle;
-    } catch (error) {
-      if (
-        (error as NodeJS.ErrnoException).code !== "EEXIST" ||
-        attempt > 0 ||
-        !(await isStaleDeadLock(lockPath))
-      ) {
-        throw error;
-      }
-      if (!(await reclaimStaleLock(lockPath))) {
-        continue;
-      }
-    }
-  }
-  throw new Error("unable to acquire governance lock");
-}
-
-async function isStaleDeadLock(lockPath: string): Promise<boolean> {
-  const lock = await readJsonFile<{ pid?: number; startedAt?: string } | null>(
-    lockPath,
-    null,
-  );
-  if (!lock) {
-    try {
-      return Date.now() - (await fs.promises.stat(lockPath)).mtimeMs > STALE_LOCK_AGE_MS;
-    } catch {
-      return false;
-    }
-  }
-  const startedAt = Date.parse(lock.startedAt ?? "");
-  if (!Number.isFinite(startedAt) || Date.now() - startedAt <= STALE_LOCK_AGE_MS) {
-    return false;
-  }
-  if (!Number.isInteger(lock.pid) || (lock.pid ?? 0) <= 0) return true;
-  try {
-    process.kill(lock.pid!, 0);
-    return false;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "ESRCH";
-  }
-}
-
-async function reclaimStaleLock(lockPath: string): Promise<boolean> {
-  const quarantinePath = `${lockPath}.stale-${process.pid}-${randomUUID()}`;
-  try {
-    await fs.promises.rename(lockPath, quarantinePath);
-    await fs.promises.rm(quarantinePath, { force: true });
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-    throw error;
-  }
+  const handle = await fs.promises.open(lockPath, "wx");
+  await handle.writeFile(JSON.stringify(value));
+  await handle.sync();
+  return handle;
 }

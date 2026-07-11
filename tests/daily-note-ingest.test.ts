@@ -6,6 +6,7 @@ import {
   collectDailyNotes,
   parseImportOutput,
   parseJsonOutput,
+  verifyBackupCoverage,
 } from "../scripts/daily-note-ingest.mjs";
 
 describe("collectDailyNotes", () => {
@@ -45,5 +46,13 @@ describe("parseImportOutput", () => {
   it("extracts counts without retaining plugin diagnostics", () => {
     expect(parseImportOutput("[plugins] loaded\nImport completed: 0 imported, 4 skipped, 0 failed\n"))
       .toEqual({ imported: 0, skipped: 4, failed: 0 });
+  });
+});
+
+describe("verifyBackupCoverage", () => {
+  it("checks the pre-import baseline rather than a later total", () => {
+    expect(() => verifyBackupCoverage({ count: 2, memories: [{}, {}] }, 2)).not.toThrow();
+    expect(() => verifyBackupCoverage({ count: 2, memories: [{}, {}] }, 3))
+      .toThrow(/incomplete/);
   });
 });

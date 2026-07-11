@@ -56,3 +56,5 @@ Choose option 2. Only tagged durable bullets from today's and yesterday's daily 
 ### Rejected Options
 
 Option 1 cannot make free-form tool selection or completion claims deterministic. Option 3 conflates ingestion with semantic governance and would stop valid new-memory capture.
+
+Stale or corrupt governance locks are never reclaimed automatically. The watchdog alerts, and a human verifies process state before removing the lock; this avoids a check-delete-open race that could permit two semantic writers.

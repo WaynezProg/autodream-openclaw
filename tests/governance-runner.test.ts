@@ -77,7 +77,7 @@ describe("runGovernance", () => {
     expect(runDreamFn).not.toHaveBeenCalled();
   });
 
-  it("recovers a stale lock owned by a dead process", async () => {
+  it("fails closed on a stale lock owned by a dead process", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "autodream-governance-stale-lock-"));
     const lockPath = path.join(dir, "governance.lock");
     fs.writeFileSync(lockPath, JSON.stringify({
@@ -96,11 +96,11 @@ describe("runGovernance", () => {
       runDreamFn,
     });
 
-    expect(result.status).toBe("success");
-    expect(runDreamFn).toHaveBeenCalledOnce();
+    expect(result.status).toBe("locked");
+    expect(runDreamFn).not.toHaveBeenCalled();
   });
 
-  it("recovers a stale malformed lock", async () => {
+  it("fails closed on a stale malformed lock", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "autodream-governance-corrupt-lock-"));
     const lockPath = path.join(dir, "governance.lock");
     fs.writeFileSync(lockPath, "{");
@@ -112,7 +112,7 @@ describe("runGovernance", () => {
       shadow: true,
       runDreamFn: vi.fn().mockResolvedValue(fakeDreamResult()),
     });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("locked");
   });
 
   it("preserves rollback_failed as a structured status", async () => {

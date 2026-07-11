@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import { runDream } from "../dream-engine.js";
 import { formatReportMarkdown } from "../report/reporter.js";
+import { runGovernance } from "../governance/governance-runner.js";
 
 /** Matches the shape of OpenClawPluginCliContext (not re-exported from plugin-entry). */
 interface CliContext {
@@ -19,13 +20,41 @@ export function registerDreamCli(
     .option("--no-dry-run", "Apply changes (merge duplicates, fix time)")
     .option("--apply-supersession", "Apply high-confidence supersession metadata changes", false)
     .option("--supersession-max <n>", "Maximum supersession changes to apply")
+    .option("--governance", "Run deterministic governance pipeline", false)
+    .option("--shadow", "Analyze and write manifests without semantic mutation", true)
+    .option("--trigger <trigger>", "Governance trigger label", "manual")
     .action(async (options: {
       scope?: string;
       dryRun: boolean;
       applySupersession?: boolean;
       supersessionMax?: string;
+      governance?: boolean;
+      shadow?: boolean;
+      trigger?: string;
     }) => {
       try {
+        if (options.governance) {
+          const governance = await runGovernance({
+            shadow: options.shadow !== false,
+            trigger: options.trigger ?? "manual",
+            artifactDir:
+              typeof pluginConfig.governanceArtifactDir === "string"
+                ? pluginConfig.governanceArtifactDir
+                : undefined,
+            dreamOptions: {
+              scope: options.scope,
+              dedupThreshold: asNumber(pluginConfig.dedupThreshold),
+              maxChangesPerRun: asNumber(pluginConfig.maxChangesPerRun),
+              staleAgeDays: asNumber(pluginConfig.staleAgeDays),
+              supersessionEnabled: asBool(pluginConfig.supersessionEnabled),
+              supersessionApply: asBool(pluginConfig.supersessionApply),
+              supersessionMaxChangesPerRun: asNumber(pluginConfig.supersessionMaxChangesPerRun),
+            },
+          });
+          console.log(JSON.stringify(governance));
+          if (governance.status !== "success") process.exitCode = 1;
+          return;
+        }
         const result = await runDream({
           scope: options.scope,
           dryRun: options.dryRun,

@@ -9,6 +9,11 @@ vi.mock("../src/dream-engine.js", () => ({
   runDream: (...args: unknown[]) => mockRunDream(...args),
 }));
 
+const mockRunGovernance = vi.fn();
+vi.mock("../src/governance/governance-runner.js", () => ({
+  runGovernance: (...args: unknown[]) => mockRunGovernance(...args),
+}));
+
 // ── Mock reporter (pass-through) ─────────────────────────────────────
 
 vi.mock("../src/report/reporter.js", async (importOriginal) => {
@@ -49,6 +54,7 @@ describe("dream CLI command", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     mockRunDream.mockReset();
+    mockRunGovernance.mockReset();
   });
 
   it("registers the dream command", () => {
@@ -215,5 +221,49 @@ describe("dream CLI command", () => {
         autoMergeDuplicates: undefined,
       }),
     );
+  });
+
+  it("runs the deterministic governance pipeline in shadow mode", async () => {
+    const { ctx, program } = buildCtx();
+    mockRunGovernance.mockResolvedValue({
+      status: "success",
+      runId: "run-cli",
+      shadow: true,
+      applied: 0,
+      manifestPath: "/tmp/run-cli.json",
+    });
+
+    registerDreamCli(ctx, {});
+    await program.parseAsync(
+      ["dream", "--governance", "--shadow", "--trigger", "cron"],
+      { from: "user" },
+    );
+
+    expect(mockRunGovernance).toHaveBeenCalledWith(
+      expect.objectContaining({ shadow: true, trigger: "cron" }),
+    );
+    expect(mockRunDream).not.toHaveBeenCalled();
+  });
+
+  it("sets a failing exit code for unsuccessful governance", async () => {
+    const { ctx, program } = buildCtx();
+    mockRunGovernance.mockResolvedValue({
+      status: "failed",
+      runId: "run-fail",
+      shadow: true,
+      applied: 0,
+      manifestPath: "/tmp/run-fail.json",
+      error: "schema mismatch",
+    });
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+
+    registerDreamCli(ctx, {});
+    await program.parseAsync(["dream", "--governance", "--shadow"], {
+      from: "user",
+    });
+
+    expect(process.exitCode).toBe(1);
+    process.exitCode = previousExitCode;
   });
 });

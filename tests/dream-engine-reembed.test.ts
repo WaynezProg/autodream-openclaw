@@ -12,8 +12,15 @@ const mockClose = vi.fn();
 const mockGetTableSchema = vi.fn().mockResolvedValue(["id", "text", "vector", "category", "scope", "importance", "timestamp", "metadata"]);
 const mockListAllMemories = vi.fn();
 const mockUpdateMemoryText = vi.fn().mockResolvedValue(true);
-const mockUpdateMemoryTextAndVector = vi.fn().mockResolvedValue(true);
-const mockDeleteMemory = vi.fn().mockResolvedValue(true);
+const mockRows = new Map<string, ReturnType<typeof makeMem>>();
+const mockGetMemoryById = vi.fn(async (id: string) => mockRows.get(id) ?? null);
+const mockUpdateMemoryTextAndVector = vi.fn(async (id: string, text: string, vector: number[]) => {
+  const row = mockRows.get(id);
+  if (!row) return false;
+  mockRows.set(id, { ...row, text, vector });
+  return true;
+});
+const mockDeleteMemory = vi.fn(async (id: string) => mockRows.delete(id));
 
 vi.mock("../src/lancedb-adapter.js", () => ({
   LanceDbAdapter: vi.fn().mockImplementation(() => ({
@@ -21,10 +28,18 @@ vi.mock("../src/lancedb-adapter.js", () => ({
     close: mockClose,
     getTableSchema: mockGetTableSchema,
     listAllMemories: mockListAllMemories,
+    getMemoryById: mockGetMemoryById,
     updateMemoryText: mockUpdateMemoryText,
     updateMemoryTextAndVector: mockUpdateMemoryTextAndVector,
     deleteMemory: mockDeleteMemory,
   })),
+  parseMetadata: (raw: string) => {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return {};
+    }
+  },
 }));
 
 // Mock dedup-detector to return controlled pairs
@@ -44,9 +59,10 @@ vi.mock("../src/analysis/conflict-detector.js", () => ({
   confirmConflictsWithLlm: vi.fn().mockResolvedValue([]),
 }));
 
+const mockDetectNoiseMemories = vi.fn().mockReturnValue([]);
 vi.mock("../src/analysis/staleness-scorer.js", () => ({
   scoreAndFilterStale: vi.fn().mockReturnValue([]),
-  detectNoiseMemories: vi.fn().mockReturnValue([]),
+  detectNoiseMemories: (...args: unknown[]) => mockDetectNoiseMemories(...args),
 }));
 
 // Mock dedup-merger to return controlled merge results
@@ -106,7 +122,11 @@ describe("dream-engine re-embed", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockRows.clear();
+    mockRows.set(mem1.id, { ...mem1 });
+    mockRows.set(mem2.id, { ...mem2 });
     mockListAllMemories.mockResolvedValue([mem1, mem2]);
+    mockDetectNoiseMemories.mockReturnValue([]);
   });
 
   it("should re-embed merged memories when embedder is provided", async () => {
@@ -114,6 +134,7 @@ describe("dream-engine re-embed", () => {
 
     // Set up merge result
     const mergeResult = {
+      pair: makeDedupPair(mem1, mem2, 0.95),
       keepId: "mem-1",
       mergedText: "user prefers dark mode / dark theme",
       originalsToDelete: ["mem-2"],
@@ -154,10 +175,11 @@ describe("dream-engine re-embed", () => {
     expect(mockDeleteMemory).toHaveBeenCalledWith("mem-2");
   });
 
-  it("should fall back to text-only update when embedder fails", async () => {
+  it("should delete nothing when embedder fails", async () => {
     const { runDream } = await import("../src/dream-engine.js");
 
     const mergeResult = {
+      pair: makeDedupPair(mem1, mem2, 0.95),
       keepId: "mem-1",
       mergedText: "user prefers dark mode / dark theme",
       originalsToDelete: ["mem-2"],
@@ -169,8 +191,6 @@ describe("dream-engine re-embed", () => {
       embed: vi.fn().mockRejectedValue(new Error("API rate limit")),
     };
 
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-
     const result = await runDream({
       dryRun: false,
       autoMergeDuplicates: true,
@@ -181,36 +201,27 @@ describe("dream-engine re-embed", () => {
       skipRem: true,
     });
 
-    // Should fall back to text-only update
-    expect(mockUpdateMemoryText).toHaveBeenCalledWith(
-      "mem-1",
-      "user prefers dark mode / dark theme",
-    );
+    // Fail closed: no text-only fallback and no deletion.
+    expect(mockUpdateMemoryText).not.toHaveBeenCalled();
     expect(mockUpdateMemoryTextAndVector).not.toHaveBeenCalled();
+    expect(mockDeleteMemory).not.toHaveBeenCalled();
 
     // Re-embed count should be 0 (failed)
     expect(result.report.reEmbedded).toBe(0);
 
-    // Should have logged a warning
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("re-embed failed"),
-    );
-
-    warnSpy.mockRestore();
   });
 
-  it("should update text only when no embedder is configured", async () => {
+  it("should delete nothing when no embedder is configured", async () => {
     const { runDream } = await import("../src/dream-engine.js");
 
     const mergeResult = {
+      pair: makeDedupPair(mem1, mem2, 0.95),
       keepId: "mem-1",
       mergedText: "user prefers dark mode / dark theme",
       originalsToDelete: ["mem-2"],
     };
     mockMergeWithLlm.mockResolvedValueOnce([mergeResult]);
     mockDetectDuplicates.mockReturnValueOnce([makeDedupPair(mem1, mem2, 0.95)]);
-
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const result = await runDream({
       dryRun: false,
@@ -222,22 +233,13 @@ describe("dream-engine re-embed", () => {
       skipRem: true,
     });
 
-    // Should use text-only update
-    expect(mockUpdateMemoryText).toHaveBeenCalledWith(
-      "mem-1",
-      "user prefers dark mode / dark theme",
-    );
+    expect(mockUpdateMemoryText).not.toHaveBeenCalled();
     expect(mockUpdateMemoryTextAndVector).not.toHaveBeenCalled();
+    expect(mockDeleteMemory).not.toHaveBeenCalled();
 
     // Re-embed count should be 0
     expect(result.report.reEmbedded).toBe(0);
 
-    // Should warn about missing embedder
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("No embedder configured"),
-    );
-
-    warnSpy.mockRestore();
   });
 
   it("should not re-embed in dry-run mode", async () => {
@@ -264,6 +266,22 @@ describe("dream-engine re-embed", () => {
     expect(result.report.reEmbedded).toBe(0);
   });
 
+  it("reports deterministic noise without immediate hard deletion", async () => {
+    const { runDream } = await import("../src/dream-engine.js");
+    mockDetectNoiseMemories.mockReturnValueOnce([mem1]);
+
+    const result = await runDream({
+      dryRun: false,
+      autoMergeDuplicates: false,
+      skipDeep: true,
+      skipRem: true,
+    });
+
+    expect(result.report.noiseEntries).toHaveLength(1);
+    expect(result.report.noiseDeleted).toBe(0);
+    expect(mockDeleteMemory).not.toHaveBeenCalled();
+  });
+
   it("should re-embed multiple merges and count correctly", async () => {
     const { runDream } = await import("../src/dream-engine.js");
 
@@ -272,6 +290,7 @@ describe("dream-engine re-embed", () => {
     const m3 = makeMem("m3", "fact c", [0, 1], 0.7);
     const m4 = makeMem("m4", "fact d", [0, 1], 0.4);
     mockListAllMemories.mockResolvedValueOnce([m1, m2, m3, m4]);
+    for (const memory of [m1, m2, m3, m4]) mockRows.set(memory.id, { ...memory });
 
     mockDetectDuplicates.mockReturnValueOnce([
       makeDedupPair(m1, m2, 0.99),
@@ -279,8 +298,8 @@ describe("dream-engine re-embed", () => {
     ]);
 
     mockMergeWithLlm.mockResolvedValueOnce([
-      { keepId: "m1", mergedText: "merged-ab", originalsToDelete: ["m2"] },
-      { keepId: "m3", mergedText: "merged-cd", originalsToDelete: ["m4"] },
+      { pair: makeDedupPair(m1, m2, 0.99), keepId: "m1", mergedText: "merged-ab", originalsToDelete: ["m2"] },
+      { pair: makeDedupPair(m3, m4, 0.98), keepId: "m3", mergedText: "merged-cd", originalsToDelete: ["m4"] },
     ]);
 
     let callCount = 0;

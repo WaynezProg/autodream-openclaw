@@ -23,6 +23,20 @@ export interface MemoryRecord {
   vector: number[];
 }
 
+export type MemoryLifecycleState =
+  | "pending"
+  | "confirmed"
+  | "superseded"
+  | "obsolete_preference"
+  | "conflicting"
+  | "archived";
+
+export type SupersessionReason =
+  | "method_migration"
+  | "preference_changed"
+  | "config_drift"
+  | "newer_decision";
+
 export interface ParsedMetadata {
   l0_abstract?: string;
   l1_overview?: string;
@@ -35,14 +49,25 @@ export interface ParsedMetadata {
   valid_from?: number;
   invalidated_at?: number;
   fact_key?: string;
-  supersedes?: string;
+  supersedes?: string[];
   superseded_by?: string;
   source_session?: string;
+  // Supersession governance fields
+  state?: MemoryLifecycleState;
+  valid_until?: number;
+  supersession_reason?: SupersessionReason;
+  canonical_key?: string;
 }
 
 export function parseMetadata(raw: string): ParsedMetadata {
   try {
-    return JSON.parse(raw) as ParsedMetadata;
+    const parsed = JSON.parse(raw) as ParsedMetadata & { supersedes?: unknown };
+    const supersedes = Array.isArray(parsed.supersedes)
+      ? parsed.supersedes.filter((id): id is string => typeof id === "string")
+      : typeof parsed.supersedes === "string"
+        ? [parsed.supersedes]
+        : [];
+    return { ...parsed, supersedes: [...new Set(supersedes)] };
   } catch {
     return {};
   }
@@ -173,6 +198,25 @@ export class LanceDbAdapter {
     }));
   }
 
+  async getMemoryById(id: string): Promise<MemoryRecord | null> {
+    const db = this.ensureConnected();
+    const table = await db.openTable(this.tableName);
+    const escapedId = id.replace(/'/g, "''");
+    const rows = await table.query().where(`id = '${escapedId}'`).limit(1).toArray();
+    const row = rows[0] as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return {
+      id: String(row["id"] ?? ""),
+      text: String(row["text"] ?? ""),
+      category: String(row["category"] ?? "other"),
+      scope: String(row["scope"] ?? ""),
+      importance: Number(row["importance"] ?? 0),
+      timestamp: Number(row["timestamp"] ?? 0),
+      metadata: String(row["metadata"] ?? "{}"),
+      vector: toNumberArray(row["vector"] ?? row["embedding"]),
+    };
+  }
+
   /**
    * Update the text field of a memory record.
    * Note: Does NOT re-embed — vector will be slightly stale but semantically similar.
@@ -249,6 +293,48 @@ export class LanceDbAdapter {
       );
       return false;
     }
+  }
+
+  /**
+   * Update only the metadata field of a memory record.
+   * Merges the patch into existing parsed metadata, then serializes back to JSON string.
+   * Throws if the memory ID is not found.
+   */
+  async updateMemoryMetadata(
+    id: string,
+    metadataPatch: Partial<ParsedMetadata>,
+  ): Promise<boolean> {
+    const db = this.ensureConnected();
+    const table = await db.openTable(this.tableName);
+    const escapedId = id.replace(/'/g, "''");
+
+    // Read existing row to get current metadata
+    const rows = await table.query().where(`id = '${escapedId}'`).limit(1).toArray();
+    const row = rows[0] as Record<string, unknown> | undefined;
+    if (!row) {
+      throw new Error(`Memory not found: ${id}`);
+    }
+
+    const existing = parseMetadata(String(row["metadata"] ?? "{}"));
+    const merged = { ...existing, ...metadataPatch };
+    const newMetadataJson = JSON.stringify(merged);
+
+    await table.update({
+      where: `id = '${escapedId}'`,
+      values: { metadata: newMetadataJson },
+    });
+    return true;
+  }
+
+  async replaceMemoryMetadata(id: string, metadata: string): Promise<boolean> {
+    const db = this.ensureConnected();
+    const table = await db.openTable(this.tableName);
+    const escapedId = id.replace(/'/g, "''");
+    await table.update({
+      where: `id = '${escapedId}'`,
+      values: { metadata },
+    });
+    return true;
   }
 
   /**

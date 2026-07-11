@@ -89,6 +89,8 @@ export function detectDuplicates(
       const a = records[i];
       const b = records[j];
 
+      if (a.scope !== b.scope || a.category !== b.category) continue;
+
       // 跳過沒有 vector 的記憶
       if (a.vector.length === 0 || b.vector.length === 0) continue;
 

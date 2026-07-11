@@ -283,6 +283,7 @@ describe("createDreamService", () => {
         autoMergeDuplicates: false,
         autoFixTime: false,
         autoDeleteStale: false,
+        supersessionApply: false,
       });
       const { internals } = createDreamServiceWithInternals(api);
 
@@ -293,6 +294,31 @@ describe("createDreamService", () => {
       expect(mockRunDream).toHaveBeenCalledWith(
         expect.objectContaining({
           dryRun: true,
+        }),
+      );
+    });
+
+    it("passes supersession config to scheduled dream runs", async () => {
+      const { api, agentEndHandlers } = createMockApi({
+        minSessionsSinceLastRun: 1,
+        autoMergeDuplicates: false,
+        autoFixTime: false,
+        autoDeleteStale: false,
+        supersessionEnabled: true,
+        supersessionApply: true,
+        supersessionMaxChangesPerRun: 3,
+      });
+      const { internals } = createDreamServiceWithInternals(api);
+
+      await agentEndHandlers[0]!();
+      await internals.executeDream();
+
+      expect(mockRunDream).toHaveBeenCalledWith(
+        expect.objectContaining({
+          dryRun: false,
+          supersessionEnabled: true,
+          supersessionApply: true,
+          supersessionMaxChangesPerRun: 3,
         }),
       );
     });
@@ -318,6 +344,9 @@ describe("createDreamService", () => {
       expect(defaults.autoMergeDuplicates).toBe(false);
       expect(defaults.autoFixTime).toBe(false);
       expect(defaults.autoDeleteStale).toBe(false);
+      expect(defaults.supersessionEnabled).toBe(true);
+      expect(defaults.supersessionApply).toBe(false);
+      expect(defaults.supersessionMaxChangesPerRun).toBe(10);
       expect(defaults.staleAgeDays).toBe(60);
       expect(defaults.dedupThreshold).toBe(0.9);
       expect(defaults.maxChangesPerRun).toBe(20);

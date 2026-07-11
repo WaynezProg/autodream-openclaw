@@ -10,7 +10,13 @@ import {
   detectNoiseMemories,
   type NoisePattern,
 } from "./analysis/staleness-scorer.js";
+import { detectSupersessionProposals } from "./analysis/supersession-detector.js";
+import {
+  applySupersessionProposals,
+  type SupersessionApplyResult,
+} from "./analysis/supersession-applier.js";
 import { mergeWithLlm, type MergeResult } from "./analysis/dedup-merger.js";
+import { applyVerifiedMerge } from "./analysis/verified-merge.js";
 import {
   LlmHelper,
   DEFAULT_LLM_CONFIG,
@@ -72,6 +78,11 @@ export interface DreamEngineConfig {
   // Recall Tracker
   recallLogDir: string;
   recallMaxAgeDays: number;
+
+  // Supersession Governance
+  supersessionEnabled: boolean;
+  supersessionApply: boolean;
+  supersessionMaxChangesPerRun: number;
 }
 
 import * as os from "node:os";
@@ -103,6 +114,11 @@ const DEFAULT_CONFIG: DreamEngineConfig = {
   // Recall Tracker
   recallLogDir: path.join(os.homedir(), ".openclaw", "memory", "autodream-reports"),
   recallMaxAgeDays: 90,
+
+  // Supersession Governance
+  supersessionEnabled: true,
+  supersessionApply: false,
+  supersessionMaxChangesPerRun: 10,
 };
 
 export interface DreamRunResult {
@@ -209,33 +225,20 @@ export async function runDream(
 
     // Phase 1.5: Noise Filter — detect and remove noise memories before analysis
     const noiseMemories = detectNoiseMemories(memories, config.noisePatterns);
-    let noiseDeleted = 0;
-    if (noiseMemories.length > 0 && !dryRun) {
-      for (const m of noiseMemories) {
-        try {
-          const ok = await adapter.deleteMemory(m.id);
-          if (ok) noiseDeleted++;
-        } catch (err) {
-          console.error(
-            `[autodream] Failed to delete noise memory ${m.id}: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-      }
-      // Remove deleted noise memories from the working set
-      const noiseIds = new Set(noiseMemories.map((m) => m.id));
-      memories = memories.filter((m) => !noiseIds.has(m.id));
-    } else if (noiseMemories.length > 0) {
-      // dry-run: just count
-      noiseDeleted = noiseMemories.length;
-    }
+    // Noise is proposal-only until a seven-day quarantine can prove the row is
+    // unchanged, unused, and unreferenced. Never hard-delete on first sight.
+    const noiseDeleted = 0;
 
     // Phase 2: Scan — rules-based first pass
     const dedupPairs = detectDuplicates(memories, {
       vectorThreshold: config.dedupThreshold,
     });
-    const timeIssues = detectRelativeTime(memories);
     const { confirmed: ruleConflicts, ambiguous } =
       detectConflictsWithAmbiguous(memories);
+    const supersessionProposals = config.supersessionEnabled
+      ? detectSupersessionProposals(memories)
+      : [];
+    const timeIssues = detectRelativeTime(memories);
     const staleItems = scoreAndFilterStale(memories, {
       staleAgeDays: config.staleAgeDays,
     });
@@ -264,46 +267,24 @@ export async function runDream(
     let reEmbedded = 0;
     if (merges.length > 0 && !dryRun) {
       const embedder = config.embedder;
-      if (!embedder) {
-        console.warn("[autodream] No embedder configured — merges will update text without re-embedding vectors");
-      }
       for (const merge of merges) {
-        try {
-          let updated = false;
-          if (embedder) {
-            try {
-              const newVector = await embedder.embed(merge.mergedText);
-              updated = await adapter.updateMemoryTextAndVector(
-                merge.keepId,
-                merge.mergedText,
-                newVector,
-              );
-              if (updated) reEmbedded++;
-            } catch (embedErr) {
-              console.warn(
-                `[autodream] re-embed failed for ${merge.keepId}, keeping old vector: ${embedErr instanceof Error ? embedErr.message : String(embedErr)}`,
-              );
-              updated = await adapter.updateMemoryText(merge.keepId, merge.mergedText);
-            }
-          } else {
-            updated = await adapter.updateMemoryText(merge.keepId, merge.mergedText);
-          }
-          if (!updated) {
-            console.error(`[autodream] Failed to update merged memory ${merge.keepId}`);
-          }
-          // Delete originals
-          for (const delId of merge.originalsToDelete) {
-            await adapter.deleteMemory(delId);
-          }
-        } catch (err) {
-          console.error(
-            `[autodream] Merge apply error for ${merge.keepId}: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
+        if (!embedder) continue;
+        const applied = await applyVerifiedMerge({ adapter, merge, embedder });
+        if (applied.status === "applied") reEmbedded++;
       }
     }
 
-    // Phase 3: Apply time fixes (when autoFixTime is on and not dry-run)
+    // Phase 3: Apply supersession metadata (opt-in only)
+    let supersessionApplyResult: SupersessionApplyResult | undefined;
+    if (!dryRun && config.supersessionApply && supersessionProposals.length > 0) {
+      supersessionApplyResult = await applySupersessionProposals(
+        adapter,
+        supersessionProposals,
+        { maxChanges: config.supersessionMaxChangesPerRun },
+      );
+    }
+
+    // Phase 4: Apply time fixes (when autoFixTime is on and not dry-run)
     let timeFixesApplied = 0;
     if (config.autoFixTime && !dryRun) {
       const highConfidence = timeIssues.filter(
@@ -410,6 +391,8 @@ export async function runDream(
       noiseDeleted,
       reEmbedded,
       noiseMemories,
+      supersessionProposals,
+      supersessionApplyResult,
     );
 
     const result: DreamRunResult = {

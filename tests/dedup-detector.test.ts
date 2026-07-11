@@ -149,4 +149,20 @@ describe("detectDuplicates", () => {
     expect(pairs[0].keep.id).toBe("hi");
     expect(pairs[0].merge.id).toBe("lo");
   });
+
+  it("rejects duplicate candidates across scope or category", () => {
+    const v = [1, 0, 0];
+    const base = makeRecord("base", "same durable memory text", v);
+    const otherScope = {
+      ...makeRecord("scope", "same durable memory text", v),
+      scope: "agent:tech",
+    };
+    const otherCategory = {
+      ...makeRecord("category", "same durable memory text", v),
+      category: "decision",
+    };
+
+    expect(detectDuplicates([base, otherScope])).toEqual([]);
+    expect(detectDuplicates([base, otherCategory])).toEqual([]);
+  });
 });

@@ -148,6 +148,9 @@ openclaw dream --no-dry-run
           "autoMergeDuplicates": true,
           "autoFixTime": true,
           "autoDeleteStale": true,
+          "supersessionEnabled": true,
+          "supersessionApply": false,
+          "supersessionMaxChangesPerRun": 3,
           "llmProvider": "openai",
           "llmModel": "gpt-4o"
         }
@@ -171,6 +174,9 @@ openclaw dream --no-dry-run
 | `autoMergeDuplicates` | boolean | false | 自動合併重複 |
 | `autoFixTime` | boolean | false | 自動轉換相對時間 |
 | `autoDeleteStale` | boolean | false | 自動刪除過時 |
+| `supersessionEnabled` | boolean | true | 偵測新記憶取代舊記憶並寫入報告 |
+| `supersessionApply` | boolean | false | 排程自動套用 supersession metadata（不刪記憶） |
+| `supersessionMaxChangesPerRun` | number | 10 | 每次最多套用 supersession metadata 筆數 |
 
 ### Deep Promotion 設定
 

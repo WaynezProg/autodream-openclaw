@@ -11,6 +11,7 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
+      "schedulerEnabled": { "type": "boolean", "default": true, "description": "Enable the plugin's in-process timer. Set false when OpenClaw cron owns governance." },
       "intervalHours": { "type": "number", "default": 24 },
       "scheduleHour": { "type": "number", "default": 3 },
       "maxChangesPerRun": { "type": "number", "default": 20 },
@@ -32,7 +33,8 @@
       "llmBaseUrl": { "type": "string", "description": "Custom API base URL (e.g. Ollama)" },
       "llmApiKey": { "type": "string", "description": "API key (falls back to OPENAI_API_KEY / ANTHROPIC_API_KEY env var)" },
       "llmMaxCalls": { "type": "number", "default": 10, "description": "Max LLM calls per dream run" },
-      "embeddingModel": { "type": "string", "default": "text-embedding-3-small", "description": "OpenAI embedding model for re-embedding merged memories. Requires OPENAI_API_KEY. Default: text-embedding-3-small" }
+      "embeddingModel": { "type": "string", "default": "text-embedding-3-small", "description": "OpenAI embedding model for re-embedding merged memories. Requires llmApiKey. Default: text-embedding-3-small" },
+      "governanceArtifactDir": { "type": "string", "description": "Directory for governance lock, status, and run manifests" }
     }
   }
 }

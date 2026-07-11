@@ -129,6 +129,21 @@ describe("createDreamService", () => {
     expect(api.on).toHaveBeenCalledWith("agent_end", expect.any(Function));
   });
 
+  it("does not schedule an internal timer when cron owns governance", async () => {
+    const { api } = createMockApi({ schedulerEnabled: false });
+    const { service, internals } = createDreamServiceWithInternals(api);
+    const ctx = createMockCtx();
+
+    await service.start(ctx);
+
+    expect(internals.isScheduled()).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(mockReadPersistedDreamStatus).not.toHaveBeenCalled();
+    expect(api.logger.info).toHaveBeenCalledWith(
+      expect.stringContaining("disabled; cron owns governance"),
+    );
+  });
+
   describe("scheduleNextRun timing", () => {
     it("should schedule for today if scheduleHour is in the future", async () => {
       vi.setSystemTime(new Date("2026-04-05T01:00:00.000Z"));
@@ -339,6 +354,7 @@ describe("createDreamService", () => {
       const defaults = _testing.DEFAULT_CONFIG;
 
       expect(defaults.intervalHours).toBe(24);
+      expect(defaults.schedulerEnabled).toBe(true);
       expect(defaults.scheduleHour).toBe(3);
       expect(defaults.minSessionsSinceLastRun).toBe(3);
       expect(defaults.autoMergeDuplicates).toBe(false);

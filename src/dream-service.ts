@@ -12,6 +12,7 @@ import path from "node:path";
 import os from "node:os";
 
 export interface DreamServiceConfig {
+  schedulerEnabled: boolean;
   intervalHours: number;
   scheduleHour: number;
   minSessionsSinceLastRun: number;
@@ -51,6 +52,7 @@ export interface DreamServiceConfig {
 }
 
 const DEFAULT_CONFIG: DreamServiceConfig = {
+  schedulerEnabled: true,
   intervalHours: 24,
   scheduleHour: 3,
   minSessionsSinceLastRun: 3,
@@ -115,6 +117,7 @@ export interface DreamServiceInternals {
   scheduleNextRun(): void;
   executeDream(): Promise<void>;
   getSessionCount(): number;
+  isScheduled(): boolean;
 }
 
 export function createDreamService(
@@ -146,12 +149,17 @@ export function createDreamServiceWithInternals(
     scheduleNextRun,
     executeDream,
     getSessionCount: () => sessionCount,
+    isScheduled: () => timerId !== null,
   };
 
   const service: OpenClawPluginService = {
     id: "autodream-scheduler",
 
     async start(_ctx: OpenClawPluginServiceContext) {
+      if (!config.schedulerEnabled) {
+        logger.info?.("[autodream] Internal scheduler disabled; cron owns governance");
+        return;
+      }
       logger.info?.("[autodream] Background service starting...");
       await startWithCatchUp();
     },

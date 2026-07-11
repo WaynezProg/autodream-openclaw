@@ -270,6 +270,25 @@ describe("applySupersessionProposals", () => {
     expect(result.skipped).toBe(1);
     expect(adapter.updateMemoryMetadata).not.toHaveBeenCalled();
   });
+
+  it("rechecks fresh rows for core promotion before mutation", async () => {
+    const adapter = makeAdapter();
+    adapter.getMemoryById = vi.fn(async (id: string) => {
+      if (id === "new-b") {
+        return makeRecord("new-b", {
+          timestamp: 2,
+          metadata: JSON.stringify({ tier: "core" }),
+        });
+      }
+      return makeRecord(id);
+    });
+    const result = await applySupersessionProposals(adapter, [makeProposal()], {
+      maxChanges: 10,
+      now: 1234,
+    });
+    expect(result).toMatchObject({ applied: 0, skipped: 1 });
+    expect(adapter.updateMemoryMetadata).not.toHaveBeenCalled();
+  });
 });
 
 function makeAdapter() {

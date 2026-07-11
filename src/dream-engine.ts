@@ -128,6 +128,7 @@ export interface DreamRunResult {
   promotions?: DeepPromotionResult;
   reflection?: RemReflection | null;
   error?: string;
+  mutationStatus?: "rollback_failed";
 }
 
 let lastRunResult: DreamRunResult | null = null;
@@ -266,6 +267,7 @@ export async function runDream(
     // Phase 2c: Apply merges + re-embed (when autoMerge is on and not dry-run)
     let reEmbedded = 0;
     const mutationFailures: string[] = [];
+    let mutationStatus: DreamRunResult["mutationStatus"];
     if (merges.length > 0 && !dryRun) {
       const embedder = config.embedder;
       for (const merge of merges) {
@@ -275,6 +277,7 @@ export async function runDream(
         if (applied.status === "failed" || applied.status === "rollback_failed") {
           mutationFailures.push(`merge_${applied.status}:${applied.reason ?? "unknown"}`);
         }
+        if (applied.status === "rollback_failed") mutationStatus = "rollback_failed";
       }
     }
 
@@ -288,6 +291,7 @@ export async function runDream(
       );
       for (const failure of supersessionApplyResult.errors) {
         mutationFailures.push(`supersession_failed:${failure.error}`);
+        if (failure.error.includes("rollback failed")) mutationStatus = "rollback_failed";
       }
     }
 
@@ -411,6 +415,7 @@ export async function runDream(
       ...(mutationFailures.length > 0
         ? { error: mutationFailures.join("; ") }
         : {}),
+      ...(mutationStatus ? { mutationStatus } : {}),
     };
     lastRunResult = result;
     return result;

@@ -39,7 +39,10 @@ export async function checkGovernanceHealth({
   }
 
   const lock = await readJson(lockPath);
-  if (lock) {
+  const lockExists = await fs.promises.stat(lockPath).then(() => true, () => false);
+  if (lockExists && !lock) {
+    alerts.push("governance lock is corrupt");
+  } else if (lock) {
     const lockAge = now - Date.parse(lock.startedAt ?? "");
     if (!Number.isFinite(lockAge) || lockAge > staleLockAgeMs) {
       alerts.push(`stale lock for run ${lock.runId ?? "unknown"}`);
@@ -62,6 +65,8 @@ export async function checkGovernanceHealth({
     ok: alerts.length === 0,
     checkedAt: new Date(now).toISOString(),
     lastSuccessRunId: status?.lastSuccess?.runId ?? null,
+    rolloutEligible:
+      manifest?.rolloutEligible === true && manifest?.benchmark?.status === "passed",
     alerts,
   };
 }

@@ -51,6 +51,7 @@ describe("runGovernance", () => {
       historyRecallDelta: null,
       targetedRecallDelta: null,
     });
+    expect(manifest.rolloutEligible).toBe(false);
     expect(status.lastAttempt.runId).toBe("run-success");
     expect(status.lastSuccess.runId).toBe("run-success");
     expect(fs.existsSync(path.join(dir, "governance.lock"))).toBe(false);
@@ -97,6 +98,37 @@ describe("runGovernance", () => {
 
     expect(result.status).toBe("success");
     expect(runDreamFn).toHaveBeenCalledOnce();
+  });
+
+  it("recovers a stale malformed lock", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "autodream-governance-corrupt-lock-"));
+    const lockPath = path.join(dir, "governance.lock");
+    fs.writeFileSync(lockPath, "{");
+    const stale = new Date(Date.now() - 3 * 60 * 60 * 1000);
+    fs.utimesSync(lockPath, stale, stale);
+    const result = await runGovernance({
+      artifactDir: dir,
+      lockPath,
+      shadow: true,
+      runDreamFn: vi.fn().mockResolvedValue(fakeDreamResult()),
+    });
+    expect(result.status).toBe("success");
+  });
+
+  it("preserves rollback_failed as a structured status", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "autodream-governance-rollback-"));
+    const result = await runGovernance({
+      artifactDir: dir,
+      lockPath: path.join(dir, "governance.lock"),
+      shadow: true,
+      runDreamFn: vi.fn().mockResolvedValue({
+        ...fakeDreamResult("merge_rollback_failed"),
+        mutationStatus: "rollback_failed",
+      }),
+    });
+    expect(result.status).toBe("rollback_failed");
+    const manifest = JSON.parse(fs.readFileSync(result.manifestPath, "utf8"));
+    expect(manifest.rollback).toEqual({ attempted: true, status: "failed" });
   });
 
   it("records failure and never advances lastSuccess", async () => {

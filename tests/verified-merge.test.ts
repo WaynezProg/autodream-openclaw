@@ -65,6 +65,22 @@ describe("applyVerifiedMerge", () => {
     }
   });
 
+  it("rechecks fresh rows for core promotion before mutation", async () => {
+    const db = adapter();
+    db.getMemoryById.mockImplementation(async (id: string) =>
+      id === "delete"
+        ? memory("delete", { metadata: JSON.stringify({ tier: "core" }) })
+        : memory("keep", { text: "merged memory" }),
+    );
+    const result = await applyVerifiedMerge({
+      adapter: db,
+      merge: { pair: pair(), keepId: "keep", originalsToDelete: ["delete"], mergedText: "merged memory" },
+      embedder: { embed: vi.fn().mockResolvedValue([1, 0, 0]) },
+    });
+    expect(result).toMatchObject({ status: "rejected", reason: "core_protected" });
+    expect(db.updateMemoryTextAndVector).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["embed failure", { embed: vi.fn().mockRejectedValue(new Error("embed")) }, adapter()],
     ["dimension mismatch", { embed: vi.fn().mockResolvedValue([1, 0]) }, adapter()],

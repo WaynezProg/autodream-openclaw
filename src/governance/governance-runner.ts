@@ -89,7 +89,11 @@ export async function runGovernance(
     }
 
     const finishedAt = new Date().toISOString();
-    const status: GovernanceRunStatus = errorMessage ? "failed" : "success";
+    const status: GovernanceRunStatus = dreamResult?.mutationStatus === "rollback_failed"
+      ? "rollback_failed"
+      : errorMessage
+        ? "failed"
+        : "success";
     const applied = shadow
       ? 0
       : dreamResult?.report.supersession?.applied?.count ?? 0;
@@ -119,7 +123,10 @@ export async function runGovernance(
         historyRecallDelta: null,
         targetedRecallDelta: null,
       },
-      rollback: { attempted: false, status: "not_required" },
+      rolloutEligible: false,
+      rollback: status === "rollback_failed"
+        ? { attempted: true, status: "failed" }
+        : { attempted: false, status: "not_required" },
     };
     await writeJsonAtomic(manifestPath, manifest);
 
@@ -167,7 +174,9 @@ async function acquireLock(
       ) {
         throw error;
       }
-      await fs.promises.rm(lockPath, { force: true });
+      if (!(await reclaimStaleLock(lockPath))) {
+        continue;
+      }
     }
   }
   throw new Error("unable to acquire governance lock");
@@ -178,7 +187,13 @@ async function isStaleDeadLock(lockPath: string): Promise<boolean> {
     lockPath,
     null,
   );
-  if (!lock) return false;
+  if (!lock) {
+    try {
+      return Date.now() - (await fs.promises.stat(lockPath)).mtimeMs > STALE_LOCK_AGE_MS;
+    } catch {
+      return false;
+    }
+  }
   const startedAt = Date.parse(lock.startedAt ?? "");
   if (!Number.isFinite(startedAt) || Date.now() - startedAt <= STALE_LOCK_AGE_MS) {
     return false;
@@ -189,5 +204,17 @@ async function isStaleDeadLock(lockPath: string): Promise<boolean> {
     return false;
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "ESRCH";
+  }
+}
+
+async function reclaimStaleLock(lockPath: string): Promise<boolean> {
+  const quarantinePath = `${lockPath}.stale-${process.pid}-${randomUUID()}`;
+  try {
+    await fs.promises.rename(lockPath, quarantinePath);
+    await fs.promises.rm(quarantinePath, { force: true });
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
   }
 }

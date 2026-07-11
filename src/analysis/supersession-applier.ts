@@ -54,6 +54,13 @@ export async function applySupersessionProposals(
       }
       beforeOldMetadata = beforeOld.metadata;
       beforeCurrentMetadata = beforeCurrent.metadata;
+      if (
+        parseMetadata(beforeOld.metadata).tier === "core" ||
+        parseMetadata(beforeCurrent.metadata).tier === "core"
+      ) {
+        result.skipped++;
+        continue;
+      }
       const oldState =
         proposal.action === "mark_obsolete_preference"
           ? "obsolete_preference"

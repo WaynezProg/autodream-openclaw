@@ -30,6 +30,16 @@ export async function applyVerifiedMerge(args: {
 
   const before = await adapter.getMemoryById(merge.keepId);
   if (!before) return { status: "failed", reason: "keep_row_missing" };
+  const freshRows = [before];
+  for (const id of [pair.a.id, pair.b.id]) {
+    if (id === merge.keepId) continue;
+    const row = await adapter.getMemoryById(id);
+    if (!row) return { status: "failed", reason: `merge_row_missing:${id}` };
+    freshRows.push(row);
+  }
+  if (freshRows.some((row) => parseMetadata(row.metadata).tier === "core")) {
+    return { status: "rejected", reason: "core_protected" };
+  }
 
   let newVector: number[];
   try {

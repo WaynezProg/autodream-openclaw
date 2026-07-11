@@ -22,6 +22,7 @@ describe("governance watchdog", () => {
     const result = await checkGovernanceHealth({ artifactDir: dir, now });
 
     expect(result.ok).toBe(true);
+    expect(result.rolloutEligible).toBe(false);
     expect(result.alerts).toEqual([]);
   });
 
@@ -58,5 +59,18 @@ describe("governance watchdog", () => {
 
     expect(result.ok).toBe(false);
     expect(result.alerts.join(" ")).toContain("stale lock");
+  });
+
+  it("alerts on a corrupt governance lock", async () => {
+    const dir = tempDir();
+    const now = Date.parse("2026-07-12T02:00:00.000Z");
+    fs.writeFileSync(path.join(dir, "governance-status.json"), JSON.stringify({
+      schemaVersion: 1,
+      lastAttempt: null,
+      lastSuccess: { runId: "ok", status: "success", finishedAt: new Date(now - 60_000).toISOString() },
+    }));
+    fs.writeFileSync(path.join(dir, "governance.lock"), "{");
+    const result = await checkGovernanceHealth({ artifactDir: dir, now });
+    expect(result.alerts.join(" ")).toContain("corrupt");
   });
 });

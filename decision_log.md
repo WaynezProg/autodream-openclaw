@@ -58,3 +58,30 @@ Choose option 2. Only tagged durable bullets from today's and yesterday's daily 
 Option 1 cannot make free-form tool selection or completion claims deterministic. Option 3 conflates ingestion with semantic governance and would stop valid new-memory capture.
 
 Stale or corrupt governance locks are never reclaimed automatically. The watchdog alerts, and a human verifies process state before removing the lock; this avoids a check-delete-open race that could permit two semantic writers.
+
+## 2026-07-12 - Keep cron as the single governance alert delivery owner
+
+### Purpose
+
+Resolve an adversarial-review proposal that added direct `openclaw message send` calls to `governance-watchdog.mjs` because healthy cron runs reported `lastDeliveryStatus: not-requested`.
+
+### Decision and Reason
+
+Reject script-owned alert delivery and keep the existing cron `failureAlert` as the only notification path. The watchdog already exits nonzero when it detects an alert, while the live cron job has `failureAlert.after: 1`, a Discord target, and a six-hour cooldown. `lastDeliveryStatus: not-requested` on a healthy run only means routine command output was not delivered; it is not evidence that failure alerts are disabled.
+
+### Alternatives Considered
+
+1. Send directly from the watchdog and keep cron `failureAlert` as a fallback.
+2. Send directly from the watchdog and remove cron `failureAlert`.
+3. Keep cron as the single delivery owner.
+
+Options 1 and 2 were rejected. Option 1 creates duplicate alert ownership and bypasses cron cooldown semantics. Option 2 moves routing, retry, and cooldown behavior into application code and conflicts with the existing cron-driven governance decision.
+
+Reconsider only if an end-to-end failing cron run proves that native `failureAlert` does not reach the configured target or omits required diagnostic information.
+
+### Verification
+
+- Confirmed the live `memory-governance-watchdog` job retains Discord `failureAlert` with `after: 1` and `cooldownMs: 21600000`.
+- Removed the uncommitted direct-send implementation and its tests; the runtime checkout returned to the branch implementation.
+- `npm run build`: passed (`tsc`).
+- `npm test`: passed, 23 test files and 270 tests.
